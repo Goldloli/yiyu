@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "translate_app",
+  "project_id": "962a0dc9-1b12-4514-a01d-2cbf05397d46"
+}
