@@ -7,6 +7,7 @@ mod events;
 mod logging;
 mod shortcuts;
 mod state;
+mod translation_flow;
 mod translation_session;
 mod tray;
 mod update;

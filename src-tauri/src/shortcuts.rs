@@ -1,4 +1,4 @@
-use crate::{commands, state::AppState};
+use crate::{state::AppState, translation_flow};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -39,19 +39,17 @@ pub fn reload(app: &AppHandle, settings: &Settings) -> YiyuResult<()> {
                     match action_owned.as_str() {
                         SELECTION => {
                             let intent = state.translations.begin_request(crate::windows::POPUP);
-                            tauri::async_runtime::spawn(
-                                commands::translation::capture_and_translate(
-                                    app.clone(),
-                                    state,
-                                    crate::windows::POPUP,
-                                    intent,
-                                ),
-                            );
+                            tauri::async_runtime::spawn(translation_flow::capture_and_translate(
+                                app.clone(),
+                                state,
+                                crate::windows::POPUP,
+                                intent,
+                            ));
                         }
                         CLIPBOARD => {
                             let intent = state.translations.begin_request(crate::windows::POPUP);
                             tauri::async_runtime::spawn(
-                                commands::translation::translate_clipboard_and_show(
+                                translation_flow::translate_clipboard_and_show(
                                     app.clone(),
                                     state,
                                     intent,

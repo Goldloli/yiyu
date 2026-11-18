@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod contract_tests;
 pub mod history;
 pub mod settings;

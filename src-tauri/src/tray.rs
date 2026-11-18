@@ -1,4 +1,4 @@
-use crate::{AppState, commands, windows};
+use crate::{AppState, translation_flow, windows};
 use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
@@ -72,7 +72,7 @@ pub fn install(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
                     let app = app.clone();
                     let intent = state.translations.begin_request(windows::POPUP);
                     if event.id.as_ref() == TRANSLATE_SELECTION {
-                        tauri::async_runtime::spawn(commands::translation::capture_and_translate(
+                        tauri::async_runtime::spawn(translation_flow::capture_and_translate(
                             app,
                             state,
                             windows::POPUP,
@@ -80,7 +80,7 @@ pub fn install(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
                         ));
                     } else {
                         tauri::async_runtime::spawn(
-                            commands::translation::translate_clipboard_and_show(app, state, intent),
+                            translation_flow::translate_clipboard_and_show(app, state, intent),
                         );
                     }
                 }
