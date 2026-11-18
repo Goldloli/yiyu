@@ -296,58 +296,70 @@ impl UpdateManager {
             };
         }
 
-        let installer_url = url::Url::parse(&asset.browser_download_url)?;
-        let client = build_client(proxy, &installer_url)?;
-        let mut request = client.get(installer_url);
-        if existing > 0 {
-            request = request.header("Range", format!("bytes={existing}-"));
-        }
-        let response = cancellable!(request.send())?;
-        let status = response.status();
-        let append = existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
-        if !status.is_success() {
-            return Err(YiyuError::new(
-                ErrorKind::Update,
-                format!("update download failed with HTTP {status}"),
-            )
-            .retryable(true));
-        }
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(append)
-            .truncate(!append)
-            .open(&part_path)
-            .await?;
-        downloaded = if append { existing } else { 0 };
-        let transfer_baseline = downloaded;
-        let mut stream = response.bytes_stream();
-        let mut last_emit = Instant::now();
-        loop {
-            let Some(chunk) = cancellable!(stream.next()) else {
-                break;
+        if asset.size == 0 || existing != asset.size {
+            let installer_url = url::Url::parse(&asset.browser_download_url)?;
+            let client = build_client(proxy, &installer_url)?;
+            let resume_from = if asset.size > 0 && existing > asset.size {
+                0
+            } else {
+                existing
             };
-            let bytes = chunk?;
-            cancellable!(file.write_all(&bytes))?;
-            downloaded += bytes.len() as u64;
-            if last_emit.elapsed() >= Duration::from_millis(100) {
-                last_emit = Instant::now();
-                snapshot.downloaded_bytes = downloaded;
-                snapshot.total_bytes = Some(asset.size);
-                snapshot.progress = progress(downloaded, asset.size);
-                apply_transfer_metrics(
-                    &mut snapshot,
-                    downloaded,
-                    asset.size,
-                    transfer_baseline,
-                    transfer_started,
-                );
-                self.set_snapshot(snapshot.clone());
-                on_progress(&snapshot);
+            let mut request = client.get(installer_url.clone());
+            if resume_from > 0 {
+                request = request.header("Range", format!("bytes={resume_from}-"));
             }
+            let mut response = cancellable!(request.send())?;
+            let mut restarted = false;
+            if resume_from > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+                response = cancellable!(client.get(installer_url).send())?;
+                restarted = true;
+            }
+            let status = response.status();
+            let append =
+                resume_from > 0 && !restarted && status == reqwest::StatusCode::PARTIAL_CONTENT;
+            if !status.is_success() || (status == reqwest::StatusCode::PARTIAL_CONTENT && !append) {
+                return Err(YiyuError::new(
+                    ErrorKind::Update,
+                    format!("update download failed with HTTP {status}"),
+                )
+                .retryable(true));
+            }
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(append)
+                .truncate(!append)
+                .open(&part_path)
+                .await?;
+            downloaded = if append { resume_from } else { 0 };
+            let transfer_baseline = downloaded;
+            let mut stream = response.bytes_stream();
+            let mut last_emit = Instant::now();
+            loop {
+                let Some(chunk) = cancellable!(stream.next()) else {
+                    break;
+                };
+                let bytes = chunk?;
+                cancellable!(file.write_all(&bytes))?;
+                downloaded += bytes.len() as u64;
+                if last_emit.elapsed() >= Duration::from_millis(100) {
+                    last_emit = Instant::now();
+                    snapshot.downloaded_bytes = downloaded;
+                    snapshot.total_bytes = Some(asset.size);
+                    snapshot.progress = progress(downloaded, asset.size);
+                    apply_transfer_metrics(
+                        &mut snapshot,
+                        downloaded,
+                        asset.size,
+                        transfer_baseline,
+                        transfer_started,
+                    );
+                    self.set_snapshot(snapshot.clone());
+                    on_progress(&snapshot);
+                }
+            }
+            cancellable!(file.flush())?;
         }
-        cancellable!(file.flush())?;
-        drop(file);
 
         snapshot.status = "verifying".into();
         snapshot.progress = Some(100.0);
@@ -803,6 +815,159 @@ mod tests {
             .unwrap();
         assert_eq!(ready.status, "ready");
         assert_eq!(ready.downloaded_bytes, installer.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn completed_partial_is_verified_without_downloading_again() {
+        let server = MockServer::start().await;
+        let installer = b"already downloaded installer";
+        Mock::given(method("GET"))
+            .and(path("/installer.dmg"))
+            .respond_with(ResponseTemplate::new(416))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/SHA256SUMS.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(format!("{}  Yiyu.dmg\n", sha256(installer))),
+            )
+            .mount(&server)
+            .await;
+        let temp = tempfile::tempdir().unwrap();
+        let paths = yiyu_core::paths::AppPaths::new(temp.path().join("app"));
+        paths.ensure().unwrap();
+        let part = part_file_path(&paths.updates_dir().join("Yiyu.dmg"));
+        tokio::fs::write(&part, installer).await.unwrap();
+        let manager = UpdateManager::new(paths);
+        *manager.resolved.lock().unwrap() = Some(ResolvedUpdate {
+            release: release_info(
+                "Yiyu.dmg",
+                format!("{}/installer.dmg", server.uri()),
+                format!("{}/SHA256SUMS.txt", server.uri()),
+                installer.len() as u64,
+            ),
+        });
+        let ready = manager
+            .download(&ProxyConfig::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(ready.status, "ready");
+        assert_eq!(
+            tokio::fs::read(ready.file_path.unwrap()).await.unwrap(),
+            installer
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_range_restarts_download_from_the_beginning() {
+        let server = MockServer::start().await;
+        let installer = b"hello installer";
+        Mock::given(method("GET"))
+            .and(path("/installer.dmg"))
+            .and(header("range", "bytes=5-"))
+            .respond_with(ResponseTemplate::new(416))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/installer.dmg"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(installer))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/SHA256SUMS.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(format!("{}  Yiyu.dmg\n", sha256(installer))),
+            )
+            .mount(&server)
+            .await;
+        let temp = tempfile::tempdir().unwrap();
+        let paths = yiyu_core::paths::AppPaths::new(temp.path().join("app"));
+        paths.ensure().unwrap();
+        tokio::fs::write(
+            part_file_path(&paths.updates_dir().join("Yiyu.dmg")),
+            b"hello",
+        )
+        .await
+        .unwrap();
+        let manager = UpdateManager::new(paths);
+        *manager.resolved.lock().unwrap() = Some(ResolvedUpdate {
+            release: release_info(
+                "Yiyu.dmg",
+                format!("{}/installer.dmg", server.uri()),
+                format!("{}/SHA256SUMS.txt", server.uri()),
+                installer.len() as u64,
+            ),
+        });
+        let ready = manager
+            .download(&ProxyConfig::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(ready.status, "ready");
+        assert_eq!(
+            tokio::fs::read(ready.file_path.unwrap()).await.unwrap(),
+            installer
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_partial_is_replaced_by_a_fresh_download() {
+        let server = MockServer::start().await;
+        let installer = b"new installer";
+        let oversized = b"an old partial file that is larger than the new installer";
+        Mock::given(method("GET"))
+            .and(path("/installer.dmg"))
+            .and(header("range", format!("bytes={}-", oversized.len())))
+            .respond_with(ResponseTemplate::new(416))
+            .expect(0)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/installer.dmg"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(installer))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/SHA256SUMS.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(format!("{}  Yiyu.dmg\n", sha256(installer))),
+            )
+            .mount(&server)
+            .await;
+        let temp = tempfile::tempdir().unwrap();
+        let paths = yiyu_core::paths::AppPaths::new(temp.path().join("app"));
+        paths.ensure().unwrap();
+        tokio::fs::write(
+            part_file_path(&paths.updates_dir().join("Yiyu.dmg")),
+            oversized,
+        )
+        .await
+        .unwrap();
+        let manager = UpdateManager::new(paths);
+        *manager.resolved.lock().unwrap() = Some(ResolvedUpdate {
+            release: release_info(
+                "Yiyu.dmg",
+                format!("{}/installer.dmg", server.uri()),
+                format!("{}/SHA256SUMS.txt", server.uri()),
+                installer.len() as u64,
+            ),
+        });
+        let ready = manager
+            .download(&ProxyConfig::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::fs::read(ready.file_path.unwrap()).await.unwrap(),
+            installer
+        );
     }
 
     #[tokio::test]
