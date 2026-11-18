@@ -49,6 +49,7 @@ uuid = { version = "1", features = ["v4"] }
 yiyu-core = { path = "../crates/yiyu-core" }
 
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 wiremock = "0.6"
 

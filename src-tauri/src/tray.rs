@@ -72,16 +72,16 @@ pub fn install(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
                     let app = app.clone();
                     let intent = state.translations.begin_request(windows::POPUP);
                     if event.id.as_ref() == TRANSLATE_SELECTION {
-                        tauri::async_runtime::spawn(commands::capture_and_translate(
+                        tauri::async_runtime::spawn(commands::translation::capture_and_translate(
                             app,
                             state,
                             windows::POPUP,
                             intent,
                         ));
                     } else {
-                        tauri::async_runtime::spawn(commands::translate_clipboard_and_show(
-                            app, state, intent,
-                        ));
+                        tauri::async_runtime::spawn(
+                            commands::translation::translate_clipboard_and_show(app, state, intent),
+                        );
                     }
                 }
             }

@@ -39,20 +39,24 @@ pub fn reload(app: &AppHandle, settings: &Settings) -> YiyuResult<()> {
                     match action_owned.as_str() {
                         SELECTION => {
                             let intent = state.translations.begin_request(crate::windows::POPUP);
-                            tauri::async_runtime::spawn(commands::capture_and_translate(
-                                app.clone(),
-                                state,
-                                crate::windows::POPUP,
-                                intent,
-                            ));
+                            tauri::async_runtime::spawn(
+                                commands::translation::capture_and_translate(
+                                    app.clone(),
+                                    state,
+                                    crate::windows::POPUP,
+                                    intent,
+                                ),
+                            );
                         }
                         CLIPBOARD => {
                             let intent = state.translations.begin_request(crate::windows::POPUP);
-                            tauri::async_runtime::spawn(commands::translate_clipboard_and_show(
-                                app.clone(),
-                                state,
-                                intent,
-                            ));
+                            tauri::async_runtime::spawn(
+                                commands::translation::translate_clipboard_and_show(
+                                    app.clone(),
+                                    state,
+                                    intent,
+                                ),
+                            );
                         }
                         OPEN_MAIN => crate::windows::show_main(app),
                         _ => {}
