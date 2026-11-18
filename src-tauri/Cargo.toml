@@ -1,0 +1,72 @@
+[package]
+name = "yiyu-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Yiyu desktop translator"
+
+[lib]
+name = "yiyu_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+async-trait = "0.1"
+atomic-write-file = "0.3"
+base64 = "0.22"
+clipboard-rs = { version = "0.3.5", default-features = false }
+dirs = "6"
+enigo = { version = "0.6", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+keyring = { version = "4", default-features = false, features = ["v1", "apple-native-keyring-store", "windows-native-keyring-store"] }
+log = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "socks", "system-proxy"] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
+tauri-plugin-autostart = "=2.5.1"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-log = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+yiyu-core = { path = "../crates/yiyu-core" }
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+axuielement = "0.10"
+block2 = "0.6"
+macos-accessibility-client = "0.0.2"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSEvent", "NSPanel", "NSWindow"] }
+tauri-nspanel = "2.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+uiautomation = { version = "0.25", features = ["control", "input", "pattern"] }
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_UI_Accessibility",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging"
+] }

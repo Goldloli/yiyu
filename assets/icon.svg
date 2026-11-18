@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1254 1254">
+  <!-- 保留用户选择的原始双羽图稿，以轮廓裁切清理透明边缘。 -->
+  <defs>
+    <clipPath id="tile">
+      <rect x="15" y="18" width="1208" height="1220" rx="345"/>
+    </clipPath>
+  </defs>
+  <g transform="translate(50.16 50.16) scale(0.92)">
+    <g clip-path="url(#tile)">
+      <rect x="15" y="18" width="1208" height="1220" fill="#f8f8f9"/>
+      <image width="1254" height="1254" xlink:href="icon-source.png"/>
+    </g>
+  </g>
+</svg>

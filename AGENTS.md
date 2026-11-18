@@ -1,5 +1,13 @@
 # Agent Instructions
 
+## 产品与设计原则
+
+- 让产品目标、架构、界面和实现保持简单；只保留直接服务于翻译的功能和信息。
+- 界面以内容和清晰的布局表达用途，删除标语、冗余说明、次要标签与重复提示；必要的错误、权限、隐私与不可逆操作提示应清楚保留。
+- 新增或调整功能前先考虑能否删除、合并或复用已有能力，避免为了设置而增加设置。
+- 每项决定同时考虑用户体验（UX）、开发维护体验（DX）和智能体理解与执行体验（AX）：行为明确、状态可见、结构易懂、命名一致。
+- 简化不得破坏现有翻译流程、辅助功能、快捷键、系统权限或用户已有数据；变更后检查所有受影响的窗口及状态。
+
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
 > **Architecture in one line:** Issues live in a local Dolt database

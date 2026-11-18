@@ -1,7 +1,33 @@
+.DS_Store
 
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
+# Build output
+target/
+dist/
+node_modules/
+web/dist/
+src-tauri/gen/
+
+# CodeGraph data
+.codegraph/*
+!.codegraph/.gitignore
+
+# Beads / Dolt
+.beads/embeddeddolt/
 .beads/proxieddb/
+*.db
 *.gate.lock*
+.dolt/
+
+# Local runtime data
+.env
+.env.*
+*.log
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Test and QA artifacts
+output/
+web/qa/artifacts/
+docs/qa/evidence/
+.cache/

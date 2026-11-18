@@ -1,0 +1,51 @@
+{
+  "name": "yiyu-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev:web": "vite --config web/vite.config.ts",
+    "build:web": "vite build --config web/vite.config.ts",
+    "typecheck": "tsc --noEmit -p web/tsconfig.json",
+    "test": "vitest run --config web/vitest.config.ts",
+    "qa:screenshots": "node web/qa/screenshots.mjs",
+    "qa:screenshots:update": "node web/qa/screenshots.mjs && node web/qa/compare-screenshots.mjs --update",
+    "qa:screenshots:compare": "node web/qa/compare-screenshots.mjs",
+    "qa:interactions": "node web/qa/interactions.mjs",
+    "qa:mock-provider": "node scripts/mock-provider.mjs",
+    "release:check": "node scripts/validate-release-assets.mjs",
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "macos:signing:setup": "node scripts/macos-local-signing.mjs setup",
+    "build:macos:local": "node scripts/macos-local-signing.mjs build",
+    "version:check": "node scripts/version.mjs",
+    "version:bump": "node scripts/version.mjs --bump"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "lucide-react": "^0.468.0",
+    "motion": "^14",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-markdown": "^10",
+    "remark-gfm": "^4",
+    "zustand": "^5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4",
+    "@tauri-apps/cli": "2.11.5",
+    "@types/node": "^24",
+    "@types/pngjs": "^6.0.5",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6",
+    "pixelmatch": "^8.0.0",
+    "playwright": "^1",
+    "pngjs": "^7.0.0",
+    "tailwindcss": "^4",
+    "typescript": "^5.9",
+    "vite": "^8",
+    "vitest": "^5"
+  }
+}
