@@ -114,6 +114,11 @@ await capture("dialog-clear-history", "#/main", { width: 980, height: 660 }, "zh
 await capture("popup-permission", "#/popup?scenario=popup-permission", { width: 382, height: 240 }, "zh-CN", async (page) => {
   await page.getByText("需要辅助功能权限才能读取选区。").waitFor();
 });
+await capture("popup-empty", "#/popup", { width: 382, height: 218 }, "zh-CN");
+await capture("popup-long", "#/popup?scenario=popup-long", { width: 382, height: 400 }, "zh-CN", async (page) => {
+  await page.getByRole("button", { name: /剪贴板翻译/ }).click();
+  await page.getByRole("button", { name: "重新翻译", exact: true }).waitFor();
+});
 await capture("popup", "#/popup", { width: 382, height: 320 }, "zh-CN", async (page) => {
   await page.getByRole("button", { name: /剪贴板翻译/ }).click();
   await page.waitForFunction(() =>

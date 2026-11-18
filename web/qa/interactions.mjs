@@ -244,6 +244,7 @@ try {
   await page.getByText("已授权", { exact: true }).waitFor();
   assert.equal(await page.getByText(/移除旧的译羽条目/).count(), 0);
 
+  await page.setViewportSize({ width: 382, height: 218 });
   await page.goto(`${base}/#/popup`);
   await page.waitForSelector("[data-window='popup']");
   await page.locator(".popup-shell .wallpaper").waitFor();
@@ -252,6 +253,13 @@ try {
     document.body.innerText.includes("消失在阅读体验")
   );
   await page.getByRole("button", { name: "重新翻译", exact: true }).waitFor();
+  const sourceToggle = page.getByRole("button", { name: "收起原文" });
+  assert.equal(await sourceToggle.getAttribute("aria-expanded"), "true");
+  await sourceToggle.click();
+  assert.equal(await page.getByRole("textbox", { name: "原文" }).count(), 0);
+  await page.getByRole("button", { name: "查看原文" }).click();
+  assert.equal(await page.getByRole("textbox", { name: "原文" }).isVisible(), true);
+  assert.equal(await page.getByRole("button", { name: "复制", exact: true }).isVisible(), true);
   await page.getByRole("button", { name: "固定", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "取消固定", exact: true }).isVisible(), true);
   await page.getByRole("button", { name: "复制", exact: true }).click();
@@ -264,6 +272,12 @@ try {
   await page.getByText("需要辅助功能权限才能读取选区。").waitFor();
   await page.getByRole("button", { name: "打开设置" }).click();
   await page.getByRole("heading", { name: "通用设置" }).waitFor();
+  await page.goto(`${base}/#/popup?scenario=popup-long`);
+  await page.getByRole("button", { name: /剪贴板翻译/ }).click();
+  await page.getByRole("button", { name: "重新翻译", exact: true }).waitFor();
+  assert.equal(await page.locator(".popup-scroll").evaluate((node) => node.scrollHeight > node.clientHeight), true);
+  assert.equal(await page.getByRole("button", { name: "复制", exact: true }).isVisible(), true);
+  await page.setViewportSize({ width: 1200, height: 800 });
 
   for (const [scenario, errorText] of [
     ["auth-failure", "Invalid API key"],

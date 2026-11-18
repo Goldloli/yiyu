@@ -70,7 +70,7 @@ pub fn install(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
                 if let Some(state) = app.try_state::<std::sync::Arc<AppState>>() {
                     let state = state.inner().clone();
                     let app = app.clone();
-                    let intent = state.begin_request(windows::POPUP);
+                    let intent = state.translations.begin_request(windows::POPUP);
                     if event.id.as_ref() == TRANSLATE_SELECTION {
                         tauri::async_runtime::spawn(commands::capture_and_translate(
                             app,
@@ -87,7 +87,7 @@ pub fn install(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
             }
             QUIT => {
                 if let Some(state) = app.try_state::<std::sync::Arc<AppState>>() {
-                    state.cancel_all();
+                    state.translations.cancel_all();
                 }
                 app.exit(0);
             }

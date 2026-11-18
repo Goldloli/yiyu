@@ -7,6 +7,7 @@ mod events;
 mod logging;
 mod shortcuts;
 mod state;
+mod translation_session;
 mod tray;
 mod update;
 mod windows;
@@ -123,7 +124,7 @@ pub fn run() {
                 if window.label() == windows::POPUP
                     && let Some(state) = window.app_handle().try_state::<Arc<AppState>>()
                 {
-                    let _ = state.cancel_translation(windows::POPUP);
+                    let _ = state.translations.cancel_translation(windows::POPUP);
                 }
             }
         })

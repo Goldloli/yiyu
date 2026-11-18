@@ -196,19 +196,19 @@ async fn capture_selection_via_clipboard_locked() -> Result<String, CaptureError
         kind: CaptureFailure::Clipboard,
         message: format!("cannot access clipboard: {error}"),
     })?;
+    let item_count = clipboard_item_count();
     let snapshot = snapshot_clipboard(&context).map_err(|error| CaptureError {
         kind: CaptureFailure::Clipboard,
         message: format!("cannot preserve current clipboard: {}", error.message),
     })?;
-    if !snapshot.contents.is_empty()
-        && !snapshot
-            .contents
-            .iter()
-            .any(|(format, bytes)| !bytes.is_empty() && is_restorable_format(format))
+    validate_clipboard_snapshot(&snapshot, item_count)?;
+    if item_count != clipboard_item_count()
+        || clipboard_fingerprint(&context).ok().as_deref()
+            != Some(contents_fingerprint(&snapshot.contents).as_str())
     {
         return Err(CaptureError {
             kind: CaptureFailure::Clipboard,
-            message: "current clipboard formats cannot be preserved".into(),
+            message: "clipboard changed while preparing selection".into(),
         });
     }
     let mut restore_guard = ClipboardRestoreGuard::new(&context, &snapshot);
@@ -280,6 +280,39 @@ async fn capture_selection_via_clipboard_locked() -> Result<String, CaptureError
 #[derive(Clone, Debug)]
 struct ClipboardSnapshot {
     contents: Vec<(String, Vec<u8>)>,
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_item_count() -> Option<usize> {
+    objc2_app_kit::NSPasteboard::generalPasteboard()
+        .pasteboardItems()
+        .map(|items| items.len())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clipboard_item_count() -> Option<usize> {
+    Some(1)
+}
+
+fn validate_clipboard_snapshot(
+    snapshot: &ClipboardSnapshot,
+    item_count: Option<usize>,
+) -> Result<(), CaptureError> {
+    let cannot_restore = item_count.is_some_and(|count| count > 1)
+        || (item_count.is_none() && !snapshot.contents.is_empty())
+        || (item_count == Some(0) && !snapshot.contents.is_empty())
+        || (cfg!(target_os = "macos") && item_count == Some(1) && snapshot.contents.is_empty())
+        || snapshot
+            .contents
+            .iter()
+            .any(|(format, bytes)| bytes.is_empty() || !is_restorable_format(format));
+    if cannot_restore {
+        return Err(CaptureError {
+            kind: CaptureFailure::Clipboard,
+            message: "Clipboard contents cannot be safely preserved for selection capture".into(),
+        });
+    }
+    Ok(())
 }
 
 fn snapshot_clipboard(context: &ClipboardContext) -> YiyuResult<ClipboardSnapshot> {
@@ -367,7 +400,12 @@ impl<C: ClipboardRestore> Drop for ClipboardRestoreGuard<'_, C> {
 }
 
 fn is_restorable_format(format: &str) -> bool {
-    !(cfg!(target_os = "macos") && format.ends_with("PboardType"))
+    !cfg!(target_os = "macos")
+        || (!format.ends_with("PboardType")
+            && format.contains('.')
+            && format
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'))
 }
 
 fn clipboard_fingerprint(context: &ClipboardContext) -> YiyuResult<String> {
@@ -693,6 +731,30 @@ mod tests {
         assert!(is_restorable_format("public.utf8-plain-text"));
         if cfg!(target_os = "macos") {
             assert!(!is_restorable_format("NSStringPboardType"));
+            assert!(!is_restorable_format("Apple HTML pasteboard type"));
+        }
+    }
+
+    #[test]
+    fn clipboard_fallback_rejects_snapshots_that_cannot_be_fully_restored() {
+        let text = ClipboardSnapshot {
+            contents: vec![("public.utf8-plain-text".into(), b"hello".to_vec())],
+        };
+        assert!(validate_clipboard_snapshot(&text, Some(1)).is_ok());
+        assert!(validate_clipboard_snapshot(&text, Some(2)).is_err());
+        assert!(validate_clipboard_snapshot(&text, None).is_err());
+        let empty_representation = ClipboardSnapshot {
+            contents: vec![("public.utf8-plain-text".into(), Vec::new())],
+        };
+        assert!(validate_clipboard_snapshot(&empty_representation, Some(1)).is_err());
+        if cfg!(target_os = "macos") {
+            let legacy = ClipboardSnapshot {
+                contents: vec![
+                    ("public.html".into(), b"html".to_vec()),
+                    ("Apple HTML pasteboard type".into(), b"html".to_vec()),
+                ],
+            };
+            assert!(validate_clipboard_snapshot(&legacy, Some(1)).is_err());
         }
     }
 }

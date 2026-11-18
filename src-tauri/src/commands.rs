@@ -4,7 +4,8 @@ use crate::dto::{
     SettingsEnvelopeDTO, StartTranslationDTO, TranslationEventDTO, TranslationStartResultDTO,
 };
 use crate::events;
-use crate::state::{AppState, TranslationIntent};
+use crate::state::AppState;
+use crate::translation_session::TranslationIntent;
 use crate::update::{self, UpdateSnapshotDTO};
 use crate::windows;
 use std::sync::Arc;
@@ -267,9 +268,9 @@ pub async fn translate_start(
     input: StartTranslationDTO,
 ) -> YiyuResult<TranslationStartResultDTO> {
     let surface = input.surface.clone();
-    let intent = state.begin_request(&surface);
+    let intent = state.translations.begin_request(&surface);
     let result = begin_translation(app, state.inner().clone(), input, &intent).await;
-    if state.finish_request(&surface, &intent) {
+    if state.translations.finish_request(&surface, &intent) {
         result
     } else {
         Err(YiyuError::cancelled())
@@ -338,6 +339,7 @@ async fn begin_translation(
     let session_id = uuid::Uuid::new_v4().to_string();
     let session_for_task = session_id.clone();
     let cancel = state
+        .translations
         .begin_translation(&surface, session_id.clone(), intent)
         .ok_or_else(YiyuError::cancelled)?;
     let request = TranslationRequest {
@@ -371,7 +373,10 @@ async fn begin_translation(
         let session_for_delta = session_for_task.clone();
         let surface_for_delta = surface.clone();
         let result = translate_stream(&request, &cancel, move |delta| {
-            if delayed_state.is_active(&surface_for_delta, &session_for_delta) {
+            if delayed_state
+                .translations
+                .is_active(&surface_for_delta, &session_for_delta)
+            {
                 let mut event =
                     TranslationEventDTO::state(&session_for_delta, &surface_for_delta, "streaming");
                 event.source_text = Some(request_text.clone());
@@ -383,7 +388,10 @@ async fn begin_translation(
 
         match result {
             Ok(outcome) => {
-                if !task_state.claim_translation_completion(&surface, &session_for_task) {
+                if !task_state
+                    .translations
+                    .claim_translation_completion(&surface, &session_for_task)
+                {
                     return;
                 }
                 let mut event =
@@ -422,7 +430,9 @@ async fn begin_translation(
                 event.history_saved = Some(history_saved);
                 event.persistence_error = persistence_error;
                 events::emit(&task_app, events::TRANSLATION_EVENT, event);
-                task_state.finish_translation(&surface, &session_for_task);
+                task_state
+                    .translations
+                    .finish_translation(&surface, &session_for_task);
             }
             Err(error) => {
                 let state_name = if error.kind == ErrorKind::Cancelled {
@@ -441,10 +451,15 @@ async fn begin_translation(
                 if error.kind != ErrorKind::Cancelled {
                     event.error = Some(error);
                 }
-                if task_state.is_active(&surface, &session_for_task) {
+                if task_state
+                    .translations
+                    .is_active(&surface, &session_for_task)
+                {
                     events::emit(&task_app, events::TRANSLATION_EVENT, event);
                 }
-                task_state.finish_translation(&surface, &session_for_task);
+                task_state
+                    .translations
+                    .finish_translation(&surface, &session_for_task);
             }
         }
     });
@@ -458,7 +473,7 @@ pub async fn translate_cancel(
     state: State<'_, Arc<AppState>>,
     surface: String,
 ) -> YiyuResult<()> {
-    if let Some(session_id) = state.cancel_translation(&surface) {
+    if let Some(session_id) = state.translations.cancel_translation(&surface) {
         events::emit(
             &app,
             events::TRANSLATION_EVENT,
@@ -481,7 +496,7 @@ pub async fn translate_clipboard(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> YiyuResult<TranslationStartResultDTO> {
-    let intent = state.begin_request(windows::POPUP);
+    let intent = state.translations.begin_request(windows::POPUP);
     let text = tokio::select! {
         biased;
         _ = intent.cancel.cancelled() => Err(YiyuError::cancelled()),
@@ -499,7 +514,7 @@ pub async fn translate_clipboard(
         }
         Err(error) => Err(error),
     };
-    if state.finish_request(windows::POPUP, &intent) {
+    if state.translations.finish_request(windows::POPUP, &intent) {
         result
     } else {
         Err(YiyuError::cancelled())
@@ -654,7 +669,7 @@ pub fn close_popup(app: AppHandle, state: State<'_, Arc<AppState>>) {
     if state.popup_pinned() {
         state.set_popup_pinned(false);
     }
-    let _ = state.cancel_translation(windows::POPUP);
+    let _ = state.translations.cancel_translation(windows::POPUP);
     windows::hide_popup(&app);
 }
 
@@ -670,7 +685,7 @@ pub fn resize_popup_window(app: AppHandle, width: f64, height: f64) -> YiyuResul
 
 #[tauri::command]
 pub fn quit_app(app: AppHandle, state: State<'_, Arc<AppState>>) {
-    state.cancel_all();
+    state.translations.cancel_all();
     windows::hide_all(&app);
     app.exit(0);
 }
@@ -721,7 +736,7 @@ pub fn install_update(
     path: String,
 ) -> YiyuResult<()> {
     let path = state.update.verify_ready_file(&path)?;
-    state.cancel_all();
+    state.translations.cancel_all();
     update::install_ready_update(&path)?;
     #[cfg(target_os = "windows")]
     _app.exit(0);
@@ -752,10 +767,10 @@ fn show_popup_failure(
     error: YiyuError,
 ) {
     if error.kind == ErrorKind::Cancelled {
-        state.finish_request(surface, intent);
+        state.translations.finish_request(surface, intent);
         return;
     }
-    if !state.fail_request(surface, intent) {
+    if !state.translations.fail_request(surface, intent) {
         return;
     }
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -795,7 +810,7 @@ async fn translate_popup_text(
     .await
     {
         Ok(_) => {
-            if state.finish_request(surface, intent) {
+            if state.translations.finish_request(surface, intent) {
                 windows::show_popup_at_cursor(&app, 380.0, 260.0);
             }
         }

@@ -352,7 +352,7 @@ fn install_popup_dismiss_monitor(app: &AppHandle) {
             return;
         };
         if !state.popup_pinned() {
-            let _ = state.cancel_translation(POPUP);
+            let _ = state.translations.cancel_translation(POPUP);
             hide_popup(&app);
         }
     });

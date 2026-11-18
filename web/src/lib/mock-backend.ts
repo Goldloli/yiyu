@@ -654,7 +654,9 @@ export class MockBackend implements Backend {
   async translateClipboard(): Promise<TranslationStartResult> {
     return this.startTranslation({
       surface: "popup",
-      text: "Lightness is not the absence of features, but the absence of friction."
+      text: currentScenario() === "popup-long"
+        ? "A thoughtful translation keeps the meaning clear, even across a long passage. ".repeat(10)
+        : "Lightness is not the absence of features, but the absence of friction."
     });
   }
 
@@ -880,6 +882,9 @@ function splitIntoChunks(text: string): string[] {
 
 function translateSample(text: string, surface: TranslationSurface): string {
   if (surface === "popup") {
+    if (currentScenario() === "popup-long") {
+      return "清晰的翻译让读者专注于内容，也让长篇文字读起来自然流畅。".repeat(12);
+    }
     return "最好的翻译，是消失在阅读体验里的那一个。";
   }
   if (/[一-龥]/.test(text)) {

@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../components/Button";
-import { BrandMark } from "../components/BrandMark";
 import { IconButton } from "../components/IconButton";
 import { Markdown } from "../components/Markdown";
 import { WindowBackdrop } from "../components/WindowBackdrop";
@@ -114,13 +113,12 @@ export function PopupWindow() {
   };
 
   return (
-    <div className="popup-shell popup-enter" ref={rootRef}>
+    <div className="popup-shell" ref={rootRef}>
       <WindowBackdrop />
       <div className="popup-surface">
       <header className="popup-header" data-tauri-drag-region>
-        <BrandMark size={24} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-semibold">
+        <div className="popup-heading">
+          <p className="popup-direction truncate">
             {session?.direction
               ? `${session.direction.sourceLabel} → ${session.direction.targetLabel}`
               : t("app.name", undefined, ui)}
@@ -130,30 +128,30 @@ export function PopupWindow() {
           <IconButton
             label={pinned ? t("popup.unpin", undefined, ui) : t("popup.pin", undefined, ui)}
             active={pinned}
-            className="!h-7 !w-7"
+            className="popup-window-action"
             onClick={() => void togglePin()}
           >
-            {pinned ? <PinOff size={12} /> : <Pin size={12} />}
+            {pinned ? <PinOff size={14} /> : <Pin size={14} />}
           </IconButton>
           <IconButton
             label={t("popup.close", undefined, ui)}
-            className="!h-7 !w-7"
+            className="popup-window-action"
             onClick={close}
           >
-            <X size={12} />
+            <X size={15} />
           </IconButton>
         </div>
       </header>
 
       {!session ? (
-        <div className="popup-empty grid min-h-[150px] place-items-center px-8 text-center">
+        <div className="popup-empty">
           <div>
-            <p role={clipboardError ? "alert" : undefined} className={clipboardError ? "text-[13px] text-danger" : "text-[13px] text-secondary"}>
+            <p role={clipboardError ? "alert" : undefined} className={clipboardError ? "popup-empty-message text-danger" : "popup-empty-message"}>
               {clipboardError?.message ?? t("popup.empty", undefined, ui)}
             </p>
             <Button
-              className="mt-3"
-              icon={<Clipboard size={12} />}
+              className="popup-clipboard"
+              icon={<Clipboard size={14} />}
               onClick={() => void translateClipboard()}
             >
               {t("settings.clipboardShortcut", undefined, ui)}
@@ -163,30 +161,31 @@ export function PopupWindow() {
       ) : (
         <>
           <div className="popup-scroll">
-            {session.sourceText && <section className="popup-source px-3.5 py-3">
+            {session.sourceText && <section className="popup-source">
               <button
                 type="button"
-                className="mb-2 flex w-full items-center gap-2 text-left text-[11px] font-semibold text-tertiary"
+                className="popup-source-toggle"
                 aria-expanded={sourceOpen}
+                aria-label={sourceOpen ? t("popup.hideSource", undefined, ui) : t("popup.source", undefined, ui)}
                 onClick={() => setSourceOpen((value) => !value)}
               >
-                {sourceOpen ? t("popup.hideSource", undefined, ui) : t("popup.source", undefined, ui)}
+                {t("main.source", undefined, ui)}
                 <ChevronDown
-                  size={12}
-                  className={`ml-auto transition-transform ${sourceOpen ? "rotate-180" : ""}`}
+                  size={13}
+                  className={`ml-auto ${sourceOpen ? "rotate-180" : ""}`}
                 />
               </button>
               {sourceOpen && (
                 <textarea
-                  className="max-h-[126px] min-h-[58px] w-full resize-none bg-transparent text-[13px] leading-[1.65] text-secondary outline-none"
+                  className="popup-source-text"
                   value={session.sourceText}
                   aria-label={t("main.source", undefined, ui)}
                   readOnly
                 />
               )}
             </section>}
-            <section className="popup-result px-4 py-3.5" aria-label={t("main.translation", undefined, ui)}>
-              {session.status !== "failed" && <p className="mb-2 text-[12px] font-semibold text-secondary">{t("main.translation", undefined, ui)}</p>}
+            <section className="popup-result" aria-label={t("main.translation", undefined, ui)}>
+              {session.status !== "failed" && <p className="popup-result-label">{t("main.translation", undefined, ui)}</p>}
               {session.status === "failed" && session.error ? (
                 <div>
                   <p role="alert" className="text-[13px] font-medium text-danger">
@@ -205,35 +204,35 @@ export function PopupWindow() {
                   <Markdown>{session.output}</Markdown>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 py-3 text-[11px] text-tertiary">
+                <div className="popup-loading">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
                   {t("common.loading", undefined, ui)}
                 </div>
               )}
             </section>
-            {clipboardError && <p role="alert" className="px-4 pb-2 text-[11px] text-danger">{clipboardError.message}</p>}
+            {clipboardError && <p role="alert" className="popup-error text-danger">{clipboardError.message}</p>}
           </div>
           <footer className="popup-footer">
-            <span className="ml-0.5 truncate text-[9.5px] text-tertiary">
+            <span className="popup-status truncate">
               {busy ? t("main.translating", undefined, ui)
                 : session.status === "cancelled" ? (ui === "en" ? "Cancelled" : "已取消") : ""}
             </span>
             {busy && (
               <IconButton
                 label={t("main.stop", undefined, ui)}
-                className="!h-7 !w-7"
+                className="popup-window-action"
                 onClick={() => void cancelTranslation("popup")}
               >
-                <Square size={11} />
+                <Square size={12} />
               </IconButton>
             )}
             {!busy && session.sourceText && (
               <IconButton
                 label={t("popup.retry", undefined, ui)}
-                className="!h-7 !w-7"
+                className="popup-window-action"
                 onClick={() => void retryTranslation("popup")}
               >
-                <RotateCcw size={12} />
+                <RotateCcw size={14} />
               </IconButton>
             )}
             {session.error?.actions.includes("open-settings") && (
@@ -260,8 +259,8 @@ export function PopupWindow() {
             {session.output && (
               <Button
                 variant="primary"
-                className="ml-auto !min-h-7 !px-2.5 text-[10.5px]"
-                icon={<Copy size={11} />}
+                className="popup-copy"
+                icon={<Copy size={13} />}
                 onClick={() => void copyText(session.output)}
               >
                 {t("common.copy", undefined, ui)}
