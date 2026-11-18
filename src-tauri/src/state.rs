@@ -13,6 +13,18 @@ pub struct ActiveTranslation {
     pub cancel: CancellationToken,
 }
 
+#[derive(Clone)]
+pub struct TranslationIntent {
+    id: String,
+    pub cancel: CancellationToken,
+}
+
+#[derive(Default)]
+struct TranslationState {
+    pending: HashMap<String, TranslationIntent>,
+    active: HashMap<String, ActiveTranslation>,
+}
+
 pub struct AppState {
     pub paths: AppPaths,
     pub settings: Arc<SettingsService>,
@@ -21,7 +33,7 @@ pub struct AppState {
     pub update: Arc<UpdateManager>,
     pub backgrounds: crate::background::BackgroundManager,
     pub settings_update: tokio::sync::Mutex<()>,
-    active: Mutex<HashMap<String, ActiveTranslation>>,
+    translations: Mutex<TranslationState>,
     pending_history: Mutex<HashMap<String, NewHistoryEntry>>,
     popup_pinned: Mutex<bool>,
     shortcut_registration_failed: Mutex<bool>,
@@ -38,17 +50,48 @@ impl AppState {
             backgrounds: crate::background::BackgroundManager::new(paths.root()),
             settings_update: tokio::sync::Mutex::new(()),
             paths,
-            active: Mutex::new(HashMap::new()),
+            translations: Mutex::new(TranslationState::default()),
             pending_history: Mutex::new(HashMap::new()),
             popup_pinned: Mutex::new(false),
             shortcut_registration_failed: Mutex::new(false),
         }))
     }
 
-    pub fn begin_translation(&self, surface: &str, session_id: String) -> CancellationToken {
+    pub fn begin_request(&self, surface: &str) -> TranslationIntent {
+        let intent = TranslationIntent {
+            id: uuid::Uuid::new_v4().to_string(),
+            cancel: CancellationToken::new(),
+        };
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        if let Some(previous) = state.pending.insert(surface.to_owned(), intent.clone()) {
+            previous.cancel.cancel();
+        }
+        intent
+    }
+
+    pub fn begin_translation(
+        &self,
+        surface: &str,
+        session_id: String,
+        intent: &TranslationIntent,
+    ) -> Option<CancellationToken> {
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        if intent.cancel.is_cancelled()
+            || !state
+                .pending
+                .get(surface)
+                .is_some_and(|entry| entry.id == intent.id)
+        {
+            return None;
+        }
         let token = CancellationToken::new();
-        let mut active = self.active.lock().expect("translation state poisoned");
-        if let Some(previous) = active.insert(
+        if let Some(previous) = state.active.insert(
             surface.to_string(),
             ActiveTranslation {
                 session_id,
@@ -57,37 +100,94 @@ impl AppState {
         ) {
             previous.cancel.cancel();
         }
-        token
+        Some(token)
     }
 
-    pub fn finish_translation(&self, surface: &str, session_id: &str) {
-        let mut active = self.active.lock().expect("translation state poisoned");
-        remove_if_current(&mut active, surface, session_id);
-    }
-
-    pub fn claim_translation_completion(&self, surface: &str, session_id: &str) -> bool {
-        let mut active = self.active.lock().expect("translation state poisoned");
-        remove_if_current(&mut active, surface, session_id)
-    }
-
-    pub fn cancel_translation(&self, surface: &str) {
-        let mut active = self.active.lock().expect("translation state poisoned");
-        if let Some(entry) = active.remove(surface) {
-            entry.cancel.cancel();
+    pub fn finish_request(&self, surface: &str, intent: &TranslationIntent) -> bool {
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        if state
+            .pending
+            .get(surface)
+            .is_some_and(|entry| entry.id == intent.id)
+        {
+            state.pending.remove(surface);
+            true
+        } else {
+            false
         }
     }
 
+    pub fn fail_request(&self, surface: &str, intent: &TranslationIntent) -> bool {
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        if !state
+            .pending
+            .get(surface)
+            .is_some_and(|entry| entry.id == intent.id)
+        {
+            return false;
+        }
+        state.pending.remove(surface);
+        if let Some(active) = state.active.remove(surface) {
+            active.cancel.cancel();
+        }
+        true
+    }
+
+    pub fn finish_translation(&self, surface: &str, session_id: &str) {
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        remove_if_current(&mut state.active, surface, session_id);
+    }
+
+    pub fn claim_translation_completion(&self, surface: &str, session_id: &str) -> bool {
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        remove_if_current(&mut state.active, surface, session_id)
+    }
+
+    pub fn cancel_translation(&self, surface: &str) -> Option<String> {
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        if let Some(entry) = state.pending.remove(surface) {
+            entry.cancel.cancel();
+        }
+        if let Some(entry) = state.active.remove(surface) {
+            entry.cancel.cancel();
+            return Some(entry.session_id);
+        }
+        None
+    }
+
     pub fn cancel_all(&self) {
-        let mut active = self.active.lock().expect("translation state poisoned");
-        for (_, entry) in active.drain() {
+        let mut state = self
+            .translations
+            .lock()
+            .expect("translation state poisoned");
+        for (_, entry) in state.pending.drain() {
+            entry.cancel.cancel();
+        }
+        for (_, entry) in state.active.drain() {
             entry.cancel.cancel();
         }
     }
 
     pub fn is_active(&self, surface: &str, session_id: &str) -> bool {
-        self.active
+        self.translations
             .lock()
             .expect("translation state poisoned")
+            .active
             .get(surface)
             .is_some_and(|entry| entry.session_id == session_id)
     }
@@ -151,6 +251,83 @@ fn remove_if_current(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn newer_request_cancels_pending_and_prevents_stale_translation() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState::new(AppPaths::new(temp.path())).unwrap();
+        let old = state.begin_request("popup");
+        let new = state.begin_request("popup");
+
+        assert!(old.cancel.is_cancelled());
+        assert!(
+            state
+                .begin_translation("popup", "old".into(), &old)
+                .is_none()
+        );
+        let active = state
+            .begin_translation("popup", "new".into(), &new)
+            .unwrap();
+        assert!(!active.is_cancelled());
+        assert!(!state.finish_request("popup", &old));
+        assert!(state.is_active("popup", "new"));
+    }
+
+    #[test]
+    fn closing_popup_cancels_pending_capture_without_affecting_main() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState::new(AppPaths::new(temp.path())).unwrap();
+        let popup = state.begin_request("popup");
+        let main = state.begin_request("main");
+
+        let _ = state.cancel_translation("popup");
+        assert!(popup.cancel.is_cancelled());
+        assert!(!main.cancel.is_cancelled());
+        assert!(
+            state
+                .begin_translation("popup", "late".into(), &popup)
+                .is_none()
+        );
+        assert!(
+            state
+                .begin_translation("main", "main".into(), &main)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn starting_a_new_translation_cancels_the_previous_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState::new(AppPaths::new(temp.path())).unwrap();
+        let first = state.begin_request("popup");
+        let active = state
+            .begin_translation("popup", "first".into(), &first)
+            .unwrap();
+
+        let second = state.begin_request("popup");
+        assert!(!active.is_cancelled());
+        assert!(
+            state
+                .begin_translation("popup", "second".into(), &second)
+                .is_some()
+        );
+        assert!(active.is_cancelled());
+        assert!(!state.is_active("popup", "first"));
+    }
+
+    #[test]
+    fn stale_failure_cannot_cancel_a_newer_translation() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState::new(AppPaths::new(temp.path())).unwrap();
+        let old = state.begin_request("popup");
+        let current = state.begin_request("popup");
+        let active = state
+            .begin_translation("popup", "current".into(), &current)
+            .unwrap();
+        assert!(!state.fail_request("popup", &old));
+        assert!(!active.is_cancelled());
+        assert!(state.is_active("popup", "current"));
+    }
 
     #[test]
     fn completion_claim_rejects_cancelled_or_superseded_sessions() {

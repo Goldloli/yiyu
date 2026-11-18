@@ -32,7 +32,8 @@ export function PopupWindow() {
     try {
       await getBackend().translateClipboard();
     } catch (error) {
-      setClipboardError(normalizeError(error));
+      const normalized = normalizeError(error);
+      if (normalized.kind !== "cancelled") setClipboardError(normalized);
     }
   };
   const copyText = useYiyuStore((state) => state.copyText);

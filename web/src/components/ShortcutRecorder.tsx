@@ -41,7 +41,10 @@ export function ShortcutRecorder({
         aria-label={label}
         className="control flex min-w-0 flex-1 items-center justify-start gap-2 px-2.5 text-left text-[12px]"
         style={recording ? { borderColor: "var(--accent)" } : undefined}
-        onClick={() => setRecording(true)}
+        onClick={(event) => {
+          event.currentTarget.focus();
+          setRecording(true);
+        }}
         onBlur={() => setRecording(false)}
         onKeyDown={onKeyDown}
       >

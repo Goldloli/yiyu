@@ -1,8 +1,21 @@
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use std::future::Future;
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
+use tokio_util::sync::CancellationToken;
 use yiyu_core::{ErrorKind, YiyuError, YiyuResult};
+
+static CLIPBOARD_ACCESS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn with_clipboard_access<F, Fut>(operation: F) -> Fut::Output
+where
+    F: FnOnce() -> Fut,
+    Fut: Future,
+{
+    let _guard = CLIPBOARD_ACCESS.lock().await;
+    operation().await
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureError {
@@ -74,7 +87,10 @@ pub fn request_accessibility_permission() {
     }
 }
 
-pub async fn capture_selection(use_fallback: bool) -> Result<String, CaptureError> {
+pub async fn capture_selection(
+    use_fallback: bool,
+    cancellation: Option<&CancellationToken>,
+) -> Result<String, CaptureError> {
     let permissions = permission_status();
     if !permissions.accessibility {
         return Err(CaptureError {
@@ -109,32 +125,73 @@ pub async fn capture_selection(use_fallback: bool) -> Result<String, CaptureErro
         return Err(native_failure.expect("checked above"));
     }
 
-    capture_selection_via_clipboard().await
+    capture_selection_via_clipboard(cancellation).await
 }
 
 fn should_try_clipboard_after_native(error: &CaptureError) -> bool {
     error.kind != CaptureFailure::Permission
 }
 
-pub fn read_clipboard_text() -> YiyuResult<String> {
-    let context = ClipboardContext::new().map_err(clipboard_error)?;
-    let text = context.get_text().map_err(clipboard_error)?;
-    let trimmed = text.trim().to_string();
-    if trimmed.is_empty() {
-        return Err(YiyuError::new(ErrorKind::Capture, "clipboard is empty").field("clipboard"));
+pub async fn read_clipboard_text() -> YiyuResult<String> {
+    with_clipboard_access(|| async {
+        let context = ClipboardContext::new().map_err(clipboard_error)?;
+        let text = context.get_text().map_err(clipboard_error)?;
+        let trimmed = text.trim().to_string();
+        if trimmed.is_empty() {
+            return Err(YiyuError::new(ErrorKind::Capture, "clipboard is empty").field("clipboard"));
+        }
+        Ok(trimmed)
+    })
+    .await
+}
+
+pub async fn copy_text(text: &str) -> YiyuResult<()> {
+    with_clipboard_access(|| async {
+        let context = ClipboardContext::new().map_err(clipboard_error)?;
+        context
+            .set_text(text.to_string())
+            .map_err(clipboard_error)?;
+        Ok(())
+    })
+    .await
+}
+
+async fn capture_selection_via_clipboard(
+    cancellation: Option<&CancellationToken>,
+) -> Result<String, CaptureError> {
+    with_cancellable_clipboard_access(cancellation, capture_selection_via_clipboard_locked).await?
+}
+
+async fn with_cancellable_clipboard_access<F, Fut>(
+    cancellation: Option<&CancellationToken>,
+    operation: F,
+) -> Result<Fut::Output, CaptureError>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future,
+{
+    let _guard = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => return Err(CaptureError {
+                kind: CaptureFailure::Cancelled,
+                message: "selection capture cancelled".into(),
+            }),
+            guard = CLIPBOARD_ACCESS.lock() => guard,
+        },
+        None => CLIPBOARD_ACCESS.lock().await,
+    };
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        return Err(CaptureError {
+            kind: CaptureFailure::Cancelled,
+            message: "selection capture cancelled".into(),
+        });
     }
-    Ok(trimmed)
+    // Once clipboard simulation begins, finish its restoration even if superseded.
+    Ok(operation().await)
 }
 
-pub fn copy_text(text: &str) -> YiyuResult<()> {
-    let context = ClipboardContext::new().map_err(clipboard_error)?;
-    context
-        .set_text(text.to_string())
-        .map_err(clipboard_error)?;
-    Ok(())
-}
-
-async fn capture_selection_via_clipboard() -> Result<String, CaptureError> {
+async fn capture_selection_via_clipboard_locked() -> Result<String, CaptureError> {
     let context = ClipboardContext::new().map_err(|error| CaptureError {
         kind: CaptureFailure::Clipboard,
         message: format!("cannot access clipboard: {error}"),
@@ -432,6 +489,88 @@ fn read_native_selection() -> Result<Option<String>, CaptureError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn clipboard_operations_wait_for_the_previous_operation_to_finish() {
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let first = tokio::spawn(with_clipboard_access(|| async move {
+            entered_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+        }));
+        entered_rx.await.unwrap();
+
+        let (second_tx, mut second_rx) = tokio::sync::oneshot::channel();
+        let second = tokio::spawn(with_clipboard_access(|| async move {
+            second_tx.send(()).unwrap();
+        }));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut second_rx)
+                .await
+                .is_err()
+        );
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), second_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        first.await.unwrap();
+        second.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn superseded_capture_finishes_restoration_before_next_clipboard_read() {
+        let clipboard = std::sync::Arc::new(std::sync::Mutex::new("original"));
+        let first_clipboard = clipboard.clone();
+        let cancellation = CancellationToken::new();
+        let first_cancellation = cancellation.clone();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let first = tokio::spawn(async move {
+            with_cancellable_clipboard_access(Some(&first_cancellation), || async move {
+                *first_clipboard.lock().unwrap() = "temporary";
+                entered_tx.send(()).unwrap();
+                release_rx.await.unwrap();
+                *first_clipboard.lock().unwrap() = "original";
+            })
+            .await
+        });
+        entered_rx.await.unwrap();
+        cancellation.cancel();
+
+        let next_clipboard = clipboard.clone();
+        let (read_tx, mut read_rx) = tokio::sync::oneshot::channel();
+        let next = tokio::spawn(with_clipboard_access(|| async move {
+            read_tx.send(*next_clipboard.lock().unwrap()).unwrap();
+        }));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut read_rx)
+                .await
+                .is_err()
+        );
+        release_tx.send(()).unwrap();
+        first.await.unwrap().unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), read_rx)
+                .await
+                .unwrap()
+                .unwrap(),
+            "original"
+        );
+        next.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_capture_does_not_enter_the_clipboard_operation() {
+        let _guard = CLIPBOARD_ACCESS.lock().await;
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let result = with_cancellable_clipboard_access(Some(&cancellation), || async {
+            panic!("cancelled capture must not touch the clipboard");
+        })
+        .await;
+        assert_eq!(result.unwrap_err().kind, CaptureFailure::Cancelled);
+    }
 
     #[derive(Default)]
     struct FakeClipboard {

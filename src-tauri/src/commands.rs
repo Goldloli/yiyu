@@ -4,7 +4,7 @@ use crate::dto::{
     SettingsEnvelopeDTO, StartTranslationDTO, TranslationEventDTO, TranslationStartResultDTO,
 };
 use crate::events;
-use crate::state::AppState;
+use crate::state::{AppState, TranslationIntent};
 use crate::update::{self, UpdateSnapshotDTO};
 use crate::windows;
 use std::sync::Arc;
@@ -266,13 +266,21 @@ pub async fn translate_start(
     state: State<'_, Arc<AppState>>,
     input: StartTranslationDTO,
 ) -> YiyuResult<TranslationStartResultDTO> {
-    begin_translation(app, state.inner().clone(), input).await
+    let surface = input.surface.clone();
+    let intent = state.begin_request(&surface);
+    let result = begin_translation(app, state.inner().clone(), input, &intent).await;
+    if state.finish_request(&surface, &intent) {
+        result
+    } else {
+        Err(YiyuError::cancelled())
+    }
 }
 
-pub async fn begin_translation(
+async fn begin_translation(
     app: AppHandle,
     state: Arc<AppState>,
     input: StartTranslationDTO,
+    intent: &TranslationIntent,
 ) -> YiyuResult<TranslationStartResultDTO> {
     let snapshot = state.settings.snapshot().await;
     let provider_id = input
@@ -329,7 +337,9 @@ pub async fn begin_translation(
     }
     let session_id = uuid::Uuid::new_v4().to_string();
     let session_for_task = session_id.clone();
-    let cancel = state.begin_translation(&surface, session_id.clone());
+    let cancel = state
+        .begin_translation(&surface, session_id.clone(), intent)
+        .ok_or_else(YiyuError::cancelled)?;
     let request = TranslationRequest {
         provider,
         api_key,
@@ -448,19 +458,20 @@ pub async fn translate_cancel(
     state: State<'_, Arc<AppState>>,
     surface: String,
 ) -> YiyuResult<()> {
-    state.cancel_translation(&surface);
-    events::emit(
-        &app,
-        events::TRANSLATION_EVENT,
-        TranslationEventDTO::state("", &surface, "cancelled"),
-    );
+    if let Some(session_id) = state.cancel_translation(&surface) {
+        events::emit(
+            &app,
+            events::TRANSLATION_EVENT,
+            TranslationEventDTO::state(&session_id, &surface, "cancelled"),
+        );
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn capture_selection(state: State<'_, Arc<AppState>>) -> YiyuResult<String> {
     let settings = state.settings.snapshot().await;
-    capture::capture_selection(settings.settings.capture_clipboard_fallback)
+    capture::capture_selection(settings.settings.capture_clipboard_fallback, None)
         .await
         .map_err(Into::into)
 }
@@ -470,20 +481,29 @@ pub async fn translate_clipboard(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> YiyuResult<TranslationStartResultDTO> {
-    let text = capture::read_clipboard_text()?;
-    begin_translation(
-        app,
-        state.inner().clone(),
-        StartTranslationDTO {
-            surface: windows::POPUP.into(),
-            text,
-            provider_id: None,
-            manual_source_language: None,
-            target_language: None,
-            fallback_target_language: None,
-        },
-    )
-    .await
+    let intent = state.begin_request(windows::POPUP);
+    let text = tokio::select! {
+        biased;
+        _ = intent.cancel.cancelled() => Err(YiyuError::cancelled()),
+        text = capture::read_clipboard_text() => text,
+    };
+    let result = match text {
+        Ok(text) => {
+            begin_translation(
+                app,
+                state.inner().clone(),
+                popup_translation_input(windows::POPUP, text),
+                &intent,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    if state.finish_request(windows::POPUP, &intent) {
+        result
+    } else {
+        Err(YiyuError::cancelled())
+    }
 }
 
 #[tauri::command]
@@ -528,8 +548,8 @@ pub async fn retry_save_history(
 }
 
 #[tauri::command]
-pub fn copy_text(text: String) -> YiyuResult<()> {
-    capture::copy_text(&text)
+pub async fn copy_text(text: String) -> YiyuResult<()> {
+    capture::copy_text(&text).await
 }
 
 #[tauri::command]
@@ -634,7 +654,7 @@ pub fn close_popup(app: AppHandle, state: State<'_, Arc<AppState>>) {
     if state.popup_pinned() {
         state.set_popup_pinned(false);
     }
-    state.cancel_translation(windows::POPUP);
+    let _ = state.cancel_translation(windows::POPUP);
     windows::hide_popup(&app);
 }
 
@@ -727,10 +747,17 @@ fn show_popup_failure(
     app: &AppHandle,
     state: &AppState,
     surface: &str,
+    intent: &TranslationIntent,
     source: Option<String>,
     error: YiyuError,
 ) {
-    state.cancel_translation(surface);
+    if error.kind == ErrorKind::Cancelled {
+        state.finish_request(surface, intent);
+        return;
+    }
+    if !state.fail_request(surface, intent) {
+        return;
+    }
     let session_id = uuid::Uuid::new_v4().to_string();
     let mut preparing = TranslationEventDTO::state(&session_id, surface, "preparing");
     preparing.source_text = Some(source.unwrap_or_default());
@@ -741,15 +768,64 @@ fn show_popup_failure(
     windows::show_popup_at_cursor(app, 380.0, 240.0);
 }
 
-pub async fn capture_and_translate(app: AppHandle, state: Arc<AppState>, surface: &str) {
-    let snapshot = state.settings.snapshot().await;
+fn popup_translation_input(surface: &str, text: String) -> StartTranslationDTO {
+    StartTranslationDTO {
+        surface: surface.into(),
+        text,
+        provider_id: None,
+        manual_source_language: None,
+        target_language: None,
+        fallback_target_language: None,
+    }
+}
+
+async fn translate_popup_text(
+    app: AppHandle,
+    state: Arc<AppState>,
+    surface: &str,
+    intent: &TranslationIntent,
+    text: String,
+) {
+    match begin_translation(
+        app.clone(),
+        state.clone(),
+        popup_translation_input(surface, text.clone()),
+        intent,
+    )
+    .await
+    {
+        Ok(_) => {
+            if state.finish_request(surface, intent) {
+                windows::show_popup_at_cursor(&app, 380.0, 260.0);
+            }
+        }
+        Err(error) => show_popup_failure(&app, &state, surface, intent, Some(text), error),
+    }
+}
+
+pub async fn capture_and_translate(
+    app: AppHandle,
+    state: Arc<AppState>,
+    surface: &str,
+    intent: TranslationIntent,
+) {
+    let snapshot = tokio::select! {
+        biased;
+        _ = intent.cancel.cancelled() => return,
+        snapshot = state.settings.snapshot() => snapshot,
+    };
     tracing::info!(
         target: "yiyu_app::capture",
         surface,
         fallback = snapshot.settings.capture_clipboard_fallback,
         "selection capture started"
     );
-    match capture::capture_selection(snapshot.settings.capture_clipboard_fallback).await {
+    let captured = capture::capture_selection(
+        snapshot.settings.capture_clipboard_fallback,
+        Some(&intent.cancel),
+    )
+    .await;
+    match captured {
         Ok(text) => {
             tracing::info!(
                 target: "yiyu_app::capture",
@@ -757,24 +833,7 @@ pub async fn capture_and_translate(app: AppHandle, state: Arc<AppState>, surface
                 characters = text.chars().count(),
                 "selection capture succeeded"
             );
-            if let Err(error) = begin_translation(
-                app.clone(),
-                state.clone(),
-                StartTranslationDTO {
-                    surface: surface.into(),
-                    text: text.clone(),
-                    provider_id: None,
-                    manual_source_language: None,
-                    target_language: None,
-                    fallback_target_language: None,
-                },
-            )
-            .await
-            {
-                show_popup_failure(&app, &state, surface, Some(text), error);
-            } else {
-                windows::show_popup_at_cursor(&app, 380.0, 260.0);
-            }
+            translate_popup_text(app, state, surface, &intent, text).await;
         }
         Err(error) => {
             let error: YiyuError = error.into();
@@ -784,35 +843,27 @@ pub async fn capture_and_translate(app: AppHandle, state: Arc<AppState>, surface
                 kind = ?error.kind,
                 "selection capture failed"
             );
-            show_popup_failure(&app, &state, surface, None, error);
+            show_popup_failure(&app, &state, surface, &intent, None, error);
         }
     }
 }
 
-pub async fn translate_clipboard_and_show(app: AppHandle, state: Arc<AppState>) {
-    match capture::read_clipboard_text() {
+pub async fn translate_clipboard_and_show(
+    app: AppHandle,
+    state: Arc<AppState>,
+    intent: TranslationIntent,
+) {
+    let text = tokio::select! {
+        biased;
+        _ = intent.cancel.cancelled() => return,
+        text = capture::read_clipboard_text() => text,
+    };
+    match text {
         Ok(text) => {
-            if let Err(error) = begin_translation(
-                app.clone(),
-                state.clone(),
-                StartTranslationDTO {
-                    surface: windows::POPUP.into(),
-                    text: text.clone(),
-                    provider_id: None,
-                    manual_source_language: None,
-                    target_language: None,
-                    fallback_target_language: None,
-                },
-            )
-            .await
-            {
-                show_popup_failure(&app, &state, windows::POPUP, Some(text), error);
-            } else {
-                windows::show_popup_at_cursor(&app, 380.0, 260.0);
-            }
+            translate_popup_text(app, state, windows::POPUP, &intent, text).await;
         }
         Err(error) => {
-            show_popup_failure(&app, &state, windows::POPUP, None, error);
+            show_popup_failure(&app, &state, windows::POPUP, &intent, None, error);
         }
     }
 }

@@ -38,16 +38,20 @@ pub fn reload(app: &AppHandle, settings: &Settings) -> YiyuResult<()> {
                     let state = app.state::<Arc<AppState>>().inner().clone();
                     match action_owned.as_str() {
                         SELECTION => {
+                            let intent = state.begin_request(crate::windows::POPUP);
                             tauri::async_runtime::spawn(commands::capture_and_translate(
                                 app.clone(),
                                 state,
                                 crate::windows::POPUP,
+                                intent,
                             ));
                         }
                         CLIPBOARD => {
+                            let intent = state.begin_request(crate::windows::POPUP);
                             tauri::async_runtime::spawn(commands::translate_clipboard_and_show(
                                 app.clone(),
                                 state,
+                                intent,
                             ));
                         }
                         OPEN_MAIN => crate::windows::show_main(app),

@@ -88,6 +88,7 @@ const initialPermissions: PermissionStatus = {
 };
 
 let noticeId = 0;
+const pendingTranslationRequests = new Map<TranslationSurface, symbol>();
 
 function applyAppearance(settings: Settings) {
   applyTheme(settings.theme);
@@ -301,6 +302,8 @@ export const useYiyuStore = create<YiyuState>((set, get) => ({
       );
       return;
     }
+    const requestId = Symbol(surface);
+    pendingTranslationRequests.set(surface, requestId);
     const placeholder: TranslationSession = {
       sessionId: "pending",
       surface,
@@ -322,9 +325,10 @@ export const useYiyuStore = create<YiyuState>((set, get) => ({
         text,
         ...options
       });
+      if (pendingTranslationRequests.get(surface) !== requestId) return;
       set((state) => {
         const current = state.sessions[surface];
-        if (!current) return {};
+        if (!current || (current.sessionId !== "pending" && current.sessionId !== result.sessionId)) return {};
         return {
           sessions: {
             ...state.sessions,
@@ -338,6 +342,7 @@ export const useYiyuStore = create<YiyuState>((set, get) => ({
       });
     } catch (error) {
       const normalized = normalizeError(error);
+      if (pendingTranslationRequests.get(surface) !== requestId || normalized.kind === "cancelled") return;
       set((state) => ({
         sessions: {
           ...state.sessions,
@@ -350,14 +355,24 @@ export const useYiyuStore = create<YiyuState>((set, get) => ({
         }
       }));
       get().notify("error", normalized.message, normalized.kind);
+    } finally {
+      if (pendingTranslationRequests.get(surface) === requestId) {
+        pendingTranslationRequests.delete(surface);
+      }
     }
   },
 
   cancelTranslation: async (surface) => {
+    const cancelledSession = get().sessions[surface];
+    pendingTranslationRequests.delete(surface);
     await getBackend().cancelTranslation(surface);
     set((state) => {
       const current = state.sessions[surface];
-      return current
+      const isSameSession = current && cancelledSession && (
+        current === cancelledSession ||
+        (cancelledSession.sessionId !== "pending" && current.sessionId === cancelledSession.sessionId)
+      );
+      return current && isSameSession
         ? {
             sessions: {
               ...state.sessions,

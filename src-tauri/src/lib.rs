@@ -123,7 +123,7 @@ pub fn run() {
                 if window.label() == windows::POPUP
                     && let Some(state) = window.app_handle().try_state::<Arc<AppState>>()
                 {
-                    state.cancel_translation(windows::POPUP);
+                    let _ = state.cancel_translation(windows::POPUP);
                 }
             }
         })

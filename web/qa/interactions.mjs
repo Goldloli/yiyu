@@ -299,6 +299,7 @@ try {
   assert.match(await page.locator("main").innerText(), /取词|剪贴板/);
   const shortcutRecorder = page.getByRole("button", { name: "划词翻译", exact: true });
   await shortcutRecorder.click();
+  assert.equal(await shortcutRecorder.evaluate((element) => document.activeElement === element), true);
   await page.keyboard.press("Alt+Shift+K");
   assert.match(await shortcutRecorder.innerText(), /K/);
   await page.getByRole("button", { name: "保存", exact: true }).click();
