@@ -52,7 +52,7 @@ pub fn run() {
     logging::init(&paths.logs_dir()).expect("cannot initialize Yiyu logging");
     let state = AppState::new(paths).expect("cannot initialize Yiyu application state");
 
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tracing::info!(target: "yiyu_app::lifecycle", "received another launch");
             show_primary_window(app);
@@ -69,9 +69,7 @@ pub fn run() {
         .manage(state.clone());
 
     #[cfg(target_os = "macos")]
-    {
-        builder = builder.plugin(tauri_nspanel::init());
-    }
+    let builder = builder.plugin(tauri_nspanel::init());
 
     builder
         .setup(move |app| {

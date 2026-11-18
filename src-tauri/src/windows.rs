@@ -51,21 +51,18 @@ fn create_main(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(MAIN).is_some() {
         return Ok(());
     }
-    let mut builder =
-        WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html#/main".into()))
-            .title("译羽")
-            .inner_size(980.0, 660.0)
-            .min_inner_size(760.0, 500.0)
-            .visible(false)
-            .center()
-            .resizable(true);
+    let builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html#/main".into()))
+        .title("译羽")
+        .inner_size(980.0, 660.0)
+        .min_inner_size(760.0, 500.0)
+        .visible(false)
+        .center()
+        .resizable(true);
     #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .transparent(true);
-    }
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .transparent(true);
     builder.build()?;
     Ok(())
 }
@@ -74,7 +71,7 @@ fn create_settings(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(SETTINGS).is_some() {
         return Ok(());
     }
-    let mut builder = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         SETTINGS,
         WebviewUrl::App("index.html#/settings".into()),
@@ -86,11 +83,9 @@ fn create_settings(app: &AppHandle) -> tauri::Result<()> {
     .center()
     .resizable(true);
     #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     builder.build()?;
     Ok(())
 }
@@ -99,7 +94,7 @@ fn create_onboarding(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(ONBOARDING).is_some() {
         return Ok(());
     }
-    let mut builder = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         ONBOARDING,
         WebviewUrl::App("index.html#/onboarding".into()),
@@ -111,11 +106,9 @@ fn create_onboarding(app: &AppHandle) -> tauri::Result<()> {
     .center()
     .resizable(true);
     #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     builder.build()?;
     Ok(())
 }

@@ -412,10 +412,10 @@ fn read_native_selection() -> Result<Option<String>, CaptureError> {
     })?;
     let mut texts = Vec::new();
     for range in ranges {
-        if let Ok(text) = range.get_text(-1) {
-            if !text.trim().is_empty() {
-                texts.push(text);
-            }
+        if let Ok(text) = range.get_text(-1)
+            && !text.trim().is_empty()
+        {
+            texts.push(text);
         }
     }
     Ok((!texts.is_empty()).then(|| texts.join("\n")))

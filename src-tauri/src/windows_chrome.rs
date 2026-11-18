@@ -30,17 +30,3 @@ pub fn make_popup_nonactivating(window: &WebviewWindow) -> tauri::Result<()> {
     }
     Ok(())
 }
-
-#[cfg(target_os = "windows")]
-pub fn allow_popup_keyboard(window: &WebviewWindow) -> tauri::Result<()> {
-    let hwnd = window.hwnd()?;
-    unsafe {
-        let style = GetWindowLongW(HWND(hwnd.0), GWL_EXSTYLE);
-        SetWindowLongW(
-            HWND(hwnd.0),
-            GWL_EXSTYLE,
-            style & !(WS_EX_NOACTIVATE.0 as i32),
-        );
-    }
-    Ok(())
-}
