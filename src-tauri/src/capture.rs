@@ -1,4 +1,6 @@
-use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
+#[cfg(not(target_os = "macos"))]
+use clipboard_rs::ClipboardContent;
+use clipboard_rs::{Clipboard, ClipboardContext};
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::future::Future;
 use std::time::Duration;
@@ -312,6 +314,13 @@ fn validate_clipboard_snapshot(
             message: "Clipboard contents cannot be safely preserved for selection capture".into(),
         });
     }
+    #[cfg(target_os = "macos")]
+    if crate::macos_clipboard::validate(&snapshot.contents).is_err() {
+        return Err(CaptureError {
+            kind: CaptureFailure::Clipboard,
+            message: "Clipboard contents cannot be safely preserved for selection capture".into(),
+        });
+    }
     Ok(())
 }
 
@@ -325,6 +334,12 @@ fn snapshot_clipboard(context: &ClipboardContext) -> YiyuResult<ClipboardSnapsho
     Ok(ClipboardSnapshot { contents })
 }
 
+#[cfg(target_os = "macos")]
+fn restore_clipboard(_context: &ClipboardContext, snapshot: &ClipboardSnapshot) -> YiyuResult<()> {
+    crate::macos_clipboard::restore(&snapshot.contents)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn restore_clipboard(context: &ClipboardContext, snapshot: &ClipboardSnapshot) -> YiyuResult<()> {
     if snapshot.contents.is_empty() {
         return context.clear().map_err(clipboard_error);
@@ -401,11 +416,13 @@ impl<C: ClipboardRestore> Drop for ClipboardRestoreGuard<'_, C> {
 
 fn is_restorable_format(format: &str) -> bool {
     !cfg!(target_os = "macos")
-        || (!format.ends_with("PboardType")
-            && format.contains('.')
-            && format
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'))
+        || (!format.to_ascii_lowercase().contains("promise")
+            && (matches!(format, "NSStringPboardType" | "Apple HTML pasteboard type")
+                || (!format.ends_with("PboardType")
+                    && format.contains('.')
+                    && format
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'))))
 }
 
 fn clipboard_fingerprint(context: &ClipboardContext) -> YiyuResult<String> {
@@ -727,11 +744,15 @@ mod tests {
     }
 
     #[test]
-    fn legacy_macos_pasteboard_aliases_are_not_replayed() {
+    fn common_legacy_macos_pasteboard_aliases_can_be_restored() {
         assert!(is_restorable_format("public.utf8-plain-text"));
         if cfg!(target_os = "macos") {
-            assert!(!is_restorable_format("NSStringPboardType"));
-            assert!(!is_restorable_format("Apple HTML pasteboard type"));
+            assert!(is_restorable_format("NSStringPboardType"));
+            assert!(is_restorable_format("Apple HTML pasteboard type"));
+            assert!(!is_restorable_format("UnknownPboardType"));
+            assert!(!is_restorable_format(
+                "com.apple.pasteboard.promised-file-url"
+            ));
         }
     }
 
@@ -754,7 +775,7 @@ mod tests {
                     ("Apple HTML pasteboard type".into(), b"html".to_vec()),
                 ],
             };
-            assert!(validate_clipboard_snapshot(&legacy, Some(1)).is_err());
+            assert!(validate_clipboard_snapshot(&legacy, Some(1)).is_ok());
         }
     }
 }
