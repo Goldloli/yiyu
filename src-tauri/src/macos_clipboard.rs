@@ -1,11 +1,14 @@
-//! Preserve a single macOS pasteboard item, including legacy format aliases.
+//! Preserve macOS pasteboard items, including legacy format aliases.
 
+use crate::capture::ClipboardItem;
 use objc2::rc::Retained;
-use objc2_app_kit::NSPasteboard;
+use objc2::runtime::ProtocolObject;
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardWriting};
 use objc2_foundation::{NSArray, NSData, NSString};
 use yiyu_core::{ErrorKind, YiyuError, YiyuResult};
 
 type Contents = [(String, Vec<u8>)];
+type Items = [ClipboardItem];
 
 struct TemporaryPasteboard(Retained<NSPasteboard>);
 
@@ -74,6 +77,72 @@ pub fn restore(contents: &Contents) -> YiyuResult<()> {
     write(&NSPasteboard::generalPasteboard(), contents)
 }
 
+fn read_items(board: &NSPasteboard) -> YiyuResult<Vec<ClipboardItem>> {
+    let items = board.pasteboardItems().ok_or_else(preservation_error)?;
+    items
+        .iter()
+        .map(|item| {
+            let types = item.types();
+            if types.is_empty() {
+                return Err(preservation_error());
+            }
+            types
+                .iter()
+                .map(|format| {
+                    let data = item.dataForType(&format).ok_or_else(preservation_error)?;
+                    Ok((format.to_string(), data.to_vec()))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn write_items(board: &NSPasteboard, items: &Items) -> YiyuResult<()> {
+    let mut prepared = Vec::with_capacity(items.len());
+    for representations in items {
+        let item = NSPasteboardItem::new();
+        for (format, bytes) in representations {
+            if !item.setData_forType(&NSData::with_bytes(bytes), &NSString::from_str(format)) {
+                return Err(preservation_error());
+            }
+        }
+        prepared.push(item);
+    }
+    let objects: Vec<&ProtocolObject<dyn NSPasteboardWriting>> = prepared
+        .iter()
+        .map(|item| ProtocolObject::from_ref(&**item))
+        .collect();
+    let array = NSArray::from_slice(&objects);
+    board.clearContents();
+    if !board.writeObjects(&array) {
+        return Err(preservation_error());
+    }
+    Ok(())
+}
+
+pub fn snapshot_items() -> YiyuResult<Vec<ClipboardItem>> {
+    read_items(&NSPasteboard::generalPasteboard())
+}
+
+pub fn validate_items(items: &Items) -> YiyuResult<()> {
+    let board = TemporaryPasteboard(NSPasteboard::pasteboardWithUniqueName());
+    write_items(&board.0, items)?;
+    let restored = read_items(&board.0)?;
+    if restored.len() != items.len()
+        || !items
+            .iter()
+            .zip(&restored)
+            .all(|(expected, actual)| expected.iter().all(|entry| actual.contains(entry)))
+    {
+        return Err(preservation_error());
+    }
+    Ok(())
+}
+
+pub fn restore_items(items: &Items) -> YiyuResult<()> {
+    write_items(&NSPasteboard::generalPasteboard(), items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +188,25 @@ mod tests {
             ("Apple HTML pasteboard type".into(), b"different".to_vec()),
         ];
         assert!(validate(&incompatible).is_err());
+    }
+
+    #[test]
+    fn multiple_items_round_trip_without_merging() {
+        let source = TemporaryPasteboard(NSPasteboard::pasteboardWithUniqueName());
+        let destination = TemporaryPasteboard(NSPasteboard::pasteboardWithUniqueName());
+        let items = vec![
+            vec![
+                ("public.utf8-plain-text".into(), b"first".to_vec()),
+                ("public.html".into(), b"<b>first</b>".to_vec()),
+            ],
+            vec![("public.utf8-plain-text".into(), b"second".to_vec())],
+        ];
+        write_items(&source.0, &items).unwrap();
+        let captured = read_items(&source.0).unwrap();
+        assert_eq!(captured.len(), 2);
+        validate_items(&captured).unwrap();
+        write_items(&destination.0, &captured).unwrap();
+        let restored = read_items(&destination.0).unwrap();
+        assert_eq!(restored, captured);
     }
 }

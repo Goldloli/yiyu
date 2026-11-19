@@ -206,7 +206,7 @@ async fn capture_selection_via_clipboard_locked() -> Result<String, CaptureError
     validate_clipboard_snapshot(&snapshot, item_count)?;
     if item_count != clipboard_item_count()
         || clipboard_fingerprint(&context).ok().as_deref()
-            != Some(contents_fingerprint(&snapshot.contents).as_str())
+            != Some(snapshot_fingerprint(&snapshot).as_str())
     {
         return Err(CaptureError {
             kind: CaptureFailure::Clipboard,
@@ -279,9 +279,21 @@ async fn capture_selection_via_clipboard_locked() -> Result<String, CaptureError
     Ok(trimmed)
 }
 
+pub(crate) type ClipboardItem = Vec<(String, Vec<u8>)>;
+
 #[derive(Clone, Debug)]
 struct ClipboardSnapshot {
-    contents: Vec<(String, Vec<u8>)>,
+    contents: ClipboardItem,
+    items: Option<Vec<ClipboardItem>>,
+}
+
+impl ClipboardSnapshot {
+    fn single(contents: ClipboardItem) -> Self {
+        Self {
+            contents,
+            items: None,
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -300,7 +312,20 @@ fn validate_clipboard_snapshot(
     snapshot: &ClipboardSnapshot,
     item_count: Option<usize>,
 ) -> Result<(), CaptureError> {
-    let cannot_restore = item_count.is_some_and(|count| count > 1)
+    let multi_valid = snapshot.items.as_ref().is_some_and(|items| {
+        cfg!(target_os = "macos")
+            && item_count == Some(items.len())
+            && items.len() > 1
+            && items.iter().all(|item| {
+                !item.is_empty()
+                    && item
+                        .iter()
+                        .all(|(format, bytes)| !bytes.is_empty() && is_restorable_format(format))
+            })
+    });
+    let cannot_restore = (item_count.is_some_and(|count| count > 1) && !multi_valid)
+        || (snapshot.items.is_some() && !multi_valid)
+        || (snapshot.items.is_some() && !snapshot.contents.is_empty())
         || (item_count.is_none() && !snapshot.contents.is_empty())
         || (item_count == Some(0) && !snapshot.contents.is_empty())
         || (cfg!(target_os = "macos") && item_count == Some(1) && snapshot.contents.is_empty())
@@ -315,7 +340,12 @@ fn validate_clipboard_snapshot(
         });
     }
     #[cfg(target_os = "macos")]
-    if crate::macos_clipboard::validate(&snapshot.contents).is_err() {
+    let validation = match &snapshot.items {
+        Some(items) => crate::macos_clipboard::validate_items(items),
+        None => crate::macos_clipboard::validate(&snapshot.contents),
+    };
+    #[cfg(target_os = "macos")]
+    if validation.is_err() {
         return Err(CaptureError {
             kind: CaptureFailure::Clipboard,
             message: "Clipboard contents cannot be safely preserved for selection capture".into(),
@@ -325,18 +355,28 @@ fn validate_clipboard_snapshot(
 }
 
 fn snapshot_clipboard(context: &ClipboardContext) -> YiyuResult<ClipboardSnapshot> {
+    #[cfg(target_os = "macos")]
+    if clipboard_item_count().is_some_and(|count| count > 1) {
+        return Ok(ClipboardSnapshot {
+            contents: Vec::new(),
+            items: Some(crate::macos_clipboard::snapshot_items()?),
+        });
+    }
     let formats = context.available_formats().map_err(clipboard_error)?;
     let mut contents = Vec::with_capacity(formats.len());
     for format in formats {
         let bytes = context.get_buffer(&format).map_err(clipboard_error)?;
         contents.push((format, bytes));
     }
-    Ok(ClipboardSnapshot { contents })
+    Ok(ClipboardSnapshot::single(contents))
 }
 
 #[cfg(target_os = "macos")]
 fn restore_clipboard(_context: &ClipboardContext, snapshot: &ClipboardSnapshot) -> YiyuResult<()> {
-    crate::macos_clipboard::restore(&snapshot.contents)
+    match &snapshot.items {
+        Some(items) => crate::macos_clipboard::restore_items(items),
+        None => crate::macos_clipboard::restore(&snapshot.contents),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -427,7 +467,21 @@ fn is_restorable_format(format: &str) -> bool {
 
 fn clipboard_fingerprint(context: &ClipboardContext) -> YiyuResult<String> {
     let snapshot = snapshot_clipboard(context)?;
-    Ok(contents_fingerprint(&snapshot.contents))
+    Ok(snapshot_fingerprint(&snapshot))
+}
+
+fn snapshot_fingerprint(snapshot: &ClipboardSnapshot) -> String {
+    use sha2::{Digest, Sha256};
+    let Some(items) = &snapshot.items else {
+        return contents_fingerprint(&snapshot.contents);
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(b"yiyu-pasteboard-items");
+    hasher.update((items.len() as u64).to_be_bytes());
+    for item in items {
+        hasher.update(contents_fingerprint(item).as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 fn contents_fingerprint(contents: &[(String, Vec<u8>)]) -> String {
@@ -649,9 +703,7 @@ mod tests {
     #[test]
     fn guard_preserves_new_user_clipboard_on_early_exit() {
         let clipboard = FakeClipboard::default();
-        let original = ClipboardSnapshot {
-            contents: Vec::new(),
-        };
+        let original = ClipboardSnapshot::single(Vec::new());
         *clipboard.fingerprint.borrow_mut() = "sentinel".into();
         {
             let mut guard = ClipboardRestoreGuard::new(&clipboard, &original);
@@ -665,9 +717,7 @@ mod tests {
     #[test]
     fn guard_restores_an_initially_empty_clipboard_when_unchanged() {
         let clipboard = FakeClipboard::default();
-        let original = ClipboardSnapshot {
-            contents: Vec::new(),
-        };
+        let original = ClipboardSnapshot::single(Vec::new());
         *clipboard.fingerprint.borrow_mut() = "sentinel".into();
         {
             let mut guard = ClipboardRestoreGuard::new(&clipboard, &original);
@@ -716,12 +766,8 @@ mod tests {
 
     #[test]
     fn fingerprint_is_deterministic() {
-        let first = ClipboardSnapshot {
-            contents: vec![("text/plain".into(), b"hello".to_vec())],
-        };
-        let second = ClipboardSnapshot {
-            contents: vec![("text/plain".into(), b"hello".to_vec())],
-        };
+        let first = ClipboardSnapshot::single(vec![("text/plain".into(), b"hello".to_vec())]);
+        let second = ClipboardSnapshot::single(vec![("text/plain".into(), b"hello".to_vec())]);
         assert_eq!(
             contents_fingerprint(&first.contents),
             contents_fingerprint(&second.contents)
@@ -743,6 +789,42 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn multiple_clipboard_items_keep_their_identity_and_order() {
+        let items = vec![
+            vec![("public.utf8-plain-text".into(), b"first".to_vec())],
+            vec![("public.utf8-plain-text".into(), b"second".to_vec())],
+        ];
+        let snapshot = ClipboardSnapshot {
+            contents: Vec::new(),
+            items: Some(items.clone()),
+        };
+        assert!(validate_clipboard_snapshot(&snapshot, Some(2)).is_ok());
+        assert!(validate_clipboard_snapshot(&snapshot, Some(3)).is_err());
+        let mut reversed = items;
+        reversed.reverse();
+        let changed = ClipboardSnapshot {
+            contents: Vec::new(),
+            items: Some(reversed),
+        };
+        assert_ne!(
+            snapshot_fingerprint(&snapshot),
+            snapshot_fingerprint(&changed)
+        );
+        let promised = ClipboardSnapshot {
+            contents: Vec::new(),
+            items: Some(vec![
+                vec![("public.utf8-plain-text".into(), b"first".to_vec())],
+                vec![(
+                    "com.apple.pasteboard.promised-file-url".into(),
+                    b"second".to_vec(),
+                )],
+            ]),
+        };
+        assert!(validate_clipboard_snapshot(&promised, Some(2)).is_err());
+    }
+
     #[test]
     fn common_legacy_macos_pasteboard_aliases_can_be_restored() {
         assert!(is_restorable_format("public.utf8-plain-text"));
@@ -758,23 +840,19 @@ mod tests {
 
     #[test]
     fn clipboard_fallback_rejects_snapshots_that_cannot_be_fully_restored() {
-        let text = ClipboardSnapshot {
-            contents: vec![("public.utf8-plain-text".into(), b"hello".to_vec())],
-        };
+        let text =
+            ClipboardSnapshot::single(vec![("public.utf8-plain-text".into(), b"hello".to_vec())]);
         assert!(validate_clipboard_snapshot(&text, Some(1)).is_ok());
         assert!(validate_clipboard_snapshot(&text, Some(2)).is_err());
         assert!(validate_clipboard_snapshot(&text, None).is_err());
-        let empty_representation = ClipboardSnapshot {
-            contents: vec![("public.utf8-plain-text".into(), Vec::new())],
-        };
+        let empty_representation =
+            ClipboardSnapshot::single(vec![("public.utf8-plain-text".into(), Vec::new())]);
         assert!(validate_clipboard_snapshot(&empty_representation, Some(1)).is_err());
         if cfg!(target_os = "macos") {
-            let legacy = ClipboardSnapshot {
-                contents: vec![
-                    ("public.html".into(), b"html".to_vec()),
-                    ("Apple HTML pasteboard type".into(), b"html".to_vec()),
-                ],
-            };
+            let legacy = ClipboardSnapshot::single(vec![
+                ("public.html".into(), b"html".to_vec()),
+                ("Apple HTML pasteboard type".into(), b"html".to_vec()),
+            ]);
             assert!(validate_clipboard_snapshot(&legacy, Some(1)).is_ok());
         }
     }
