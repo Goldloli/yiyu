@@ -92,6 +92,16 @@ for (const theme of ["light", "dark"]) {
     await page.mouse.move(1478, 1048);
   });
 }
+for (const theme of ["light", "dark"]) {
+  await capture(`main-no-background-${theme}`, "#/settings", { width: 980, height: 660 }, "zh-CN", async (page) => {
+    await page.getByRole("button", { name: "外观", exact: true }).click();
+    await page.getByRole("button", { name: theme === "dark" ? "深色" : "浅色", exact: true }).click();
+    await page.getByRole("button", { name: "无背景", exact: true }).click();
+    await page.goto(`${base}/#/main`);
+    await page.waitForSelector("[data-window='main'] .workspace-panels");
+    if (await page.locator(".wallpaper").count()) failures.push(`main-no-background-${theme}: wallpaper is still visible`);
+  });
+}
 await capture("settings", "#/settings", { width: 860, height: 640 }, "zh-CN");
 await capture("settings-appearance", "#/settings", { width: 860, height: 640 }, "zh-CN", async (page) => {
   await page.getByRole("button", { name: "外观", exact: true }).click();

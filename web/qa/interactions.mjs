@@ -169,6 +169,15 @@ try {
   assert.equal(await silentStart.getAttribute("aria-checked"), "true");
   await autoStart.click();
   await silentStart.click();
+  const inputLimit = page.getByRole("spinbutton", { name: "单次输入上限" });
+  await inputLimit.fill("24000");
+  await inputLimit.blur();
+  await page.getByRole("button", { name: "外观", exact: true }).click();
+  await page.getByRole("button", { name: "通用", exact: true }).click();
+  assert.equal(await inputLimit.inputValue(), "24000");
+  await inputLimit.fill("999");
+  await inputLimit.blur();
+  assert.equal(await inputLimit.inputValue(), "24000");
   await page.getByRole("button", { name: "模型", exact: true }).click();
   const prompt = page.locator("textarea").first();
   await prompt.fill("Custom prompt");

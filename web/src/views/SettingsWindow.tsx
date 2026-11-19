@@ -612,7 +612,7 @@ function GeneralSection() {
         />
       </div>
       <div className="mb-6">
-        <p className="section-label mb-2">{t("settings.targetDefaults", undefined, ui)}</p>
+        <p className="section-label mb-2">{ui === "en" ? "Translation" : "翻译"}</p>
         <div className="grid grid-cols-2 gap-4 border-t pt-3" style={{ borderColor: "var(--line)" }}>
           <Field label={t("main.target", undefined, ui)}>
             <SelectMenu
@@ -628,6 +628,32 @@ function GeneralSection() {
               onChange={(fallbackTargetLanguage) => void patchSettings({ fallbackTargetLanguage })}
             />
           </Field>
+        </div>
+        <div className="mt-3 border-t" style={{ borderColor: "var(--line)" }}>
+          <PropertyRow
+            title={t("settings.maxInput", undefined, ui)}
+            description="1,000–200,000"
+            control={
+              <input
+                type="number"
+                aria-label={t("settings.maxInput", undefined, ui)}
+                className="control w-[100px] px-2 text-right text-[13px]"
+                min={1_000}
+                max={200_000}
+                inputMode="numeric"
+                value={maxInput}
+                onChange={(event) => setMaxInput(event.target.value)}
+                onBlur={() => {
+                  const value = Number(maxInput);
+                  if (Number.isFinite(value) && value >= 1_000 && value <= 200_000) {
+                    void patchSettings({ maxInputChars: value });
+                  } else {
+                    setMaxInput(String(settings.maxInputChars));
+                  }
+                }}
+              />
+            }
+          />
         </div>
       </div>
       <div className="mb-6">
@@ -649,6 +675,7 @@ function GeneralSection() {
             control={
               <input
                 type="number"
+                aria-label={t("settings.historyLimit", undefined, ui)}
                 className="control w-[100px] px-2 text-right text-[13px]"
                 min={10}
                 max={10_000}
@@ -665,29 +692,6 @@ function GeneralSection() {
               />
             }
           />
-          <PropertyRow
-            title={t("settings.maxInput", undefined, ui)}
-            description="1,000–200,000"
-            control={
-              <input
-                type="number"
-                className="control w-[100px] px-2 text-right text-[13px]"
-                min={1_000}
-                max={200_000}
-                inputMode="numeric"
-                value={maxInput}
-                onChange={(event) => setMaxInput(event.target.value)}
-                onBlur={() => {
-                  const value = Number(maxInput);
-                  if (Number.isFinite(value) && value >= 1_000 && value <= 200_000) {
-                    void patchSettings({ maxInputChars: value });
-                  } else {
-                    setMaxInput(String(settings.maxInputChars));
-                  }
-                }}
-              />
-            }
-          />
         </div>
       </div>
       <div className="mb-6">
@@ -697,8 +701,8 @@ function GeneralSection() {
             title={t("settings.clipboardFallback", undefined, ui)}
             description={
               ui === "en"
-                ? "Used only when native accessibility selection reading fails. The clipboard is restored."
-                : "仅在原生 Accessibility 取词失败时使用，并恢复原剪贴板内容。"
+                ? "Used only when selection cannot be read directly. New copies are preserved."
+                : "无法直接取词时临时复制，并保留之后手动复制的内容。"
             }
             control={
               <Toggle
@@ -802,12 +806,10 @@ function ShortcutsSection() {
 
 function ProxyEditor({
   title,
-  description,
   proxy,
   setProxy
 }: {
   title: string;
-  description: string;
   proxy: ProxyConfig;
   setProxy: (proxy: ProxyConfig) => void;
 }) {
@@ -815,10 +817,7 @@ function ProxyEditor({
   return (
     <div className="border-t py-4" style={{ borderColor: "var(--line)" }}>
       <div className="mb-3 flex items-center justify-between gap-4">
-        <div>
-          <p className="text-[13px] font-medium">{title}</p>
-          <p className="mt-0.5 text-[13px] leading-4 text-tertiary">{description}</p>
-        </div>
+        <p className="text-[13px] font-medium">{title}</p>
         <SegmentedControl
           label={title}
           value={proxy.mode}
@@ -867,21 +866,11 @@ function NetworkSection() {
       <PageHeading title={t("settings.networkTitle", undefined, ui)} />
       <ProxyEditor
         title={t("settings.providerProxy", undefined, ui)}
-        description={
-          ui === "en"
-            ? "Used for model requests. localhost endpoints stay direct."
-            : "用于模型请求，localhost 地址始终直连。"
-        }
         proxy={providerProxy}
         setProxy={setProviderProxy}
       />
       <ProxyEditor
         title={t("settings.updateProxy", undefined, ui)}
-        description={
-          ui === "en"
-            ? "Used only for GitHub metadata, checksums and installer downloads."
-            : "仅用于 GitHub 元数据、校验文件与安装包下载。"
-        }
         proxy={updateProxy}
         setProxy={setUpdateProxy}
       />
