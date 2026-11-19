@@ -8,6 +8,7 @@ mod events;
 mod logging;
 #[cfg(target_os = "macos")]
 mod macos_clipboard;
+mod pending_history;
 mod shortcuts;
 mod startup_error;
 mod state;

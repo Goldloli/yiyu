@@ -42,7 +42,9 @@ pub async fn retry_save_history(
     session_id: String,
 ) -> YiyuResult<HistoryEntry> {
     let settings = state.settings.snapshot().await;
-    let saved = state.retry_pending_history(&session_id, settings.settings.history_limit)?;
+    let saved = state.pending_history.retry(&session_id, |entry| {
+        state.history.insert(entry, settings.settings.history_limit)
+    })?;
     events::emit(&app, events::HISTORY_CHANGED, true);
     Ok(saved)
 }

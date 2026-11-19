@@ -171,7 +171,9 @@ async fn begin_translation(
                             events::emit(&task_app, events::HISTORY_CHANGED, true);
                         }
                         Err(error) => {
-                            task_state.remember_pending_history(&session_for_task, entry);
+                            task_state
+                                .pending_history
+                                .remember(&session_for_task, entry);
                             persistence_error = Some(error);
                         }
                     }
