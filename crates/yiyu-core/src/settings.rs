@@ -1,14 +1,9 @@
-use crate::paths::AppPaths;
+mod storage;
+
+pub use storage::{SettingsService, SettingsStore};
+
 use crate::provider::{ProviderConfig, built_in_providers};
-use crate::{YiyuError, YiyuResult};
-use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::{Mutex, RwLock};
 
 pub const SETTINGS_VERSION: u32 = 1;
 pub const DEFAULT_HISTORY_LIMIT: u32 = 500;
@@ -103,6 +98,8 @@ pub struct Settings {
     pub background_id: Option<String>,
     // None represents a legacy configuration: retain its custom image if present.
     pub background_choice: Option<String>,
+    // Provider identifiers only; secrets remain in the system credential store.
+    pub pending_credential_cleanup: Vec<String>,
 }
 
 impl Default for Settings {
@@ -132,6 +129,7 @@ impl Default for Settings {
             silent_start: false,
             background_id: None,
             background_choice: None,
+            pending_credential_cleanup: Vec::new(),
         }
     }
 }
@@ -364,6 +362,9 @@ pub struct SettingsPatch {
     // Background changes are only accepted through the managed-resource commands.
     #[serde(skip_deserializing)]
     pub background_id: Option<Option<String>>,
+    // Only the backend may schedule or clear credential cleanup.
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub pending_credential_cleanup: Option<Vec<String>>,
 }
 
 fn deserialize_nullable_patch<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -417,168 +418,16 @@ impl Settings {
         if let Some(value) = patch.background_id.clone() {
             next.background_id = value;
         }
+        replace!(pending_credential_cleanup);
         next
-    }
-}
-
-pub struct SettingsStore {
-    path: PathBuf,
-}
-
-impl SettingsStore {
-    pub fn new(paths: &AppPaths) -> Self {
-        Self {
-            path: paths.settings_file(),
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn load(&self) -> YiyuResult<Settings> {
-        if !self.path.exists() {
-            return Ok(Settings::default());
-        }
-        let bytes = fs::read(&self.path)?;
-        let settings: Settings = serde_json::from_slice(&bytes).map_err(|error| {
-            YiyuError::new(
-                crate::ErrorKind::Config,
-                format!("settings file is invalid: {error}"),
-            )
-            .field("settings")
-        })?;
-        settings.validate().map_err(|issues| {
-            YiyuError::new(
-                crate::ErrorKind::Validation,
-                issues
-                    .iter()
-                    .map(|issue| format!("{}: {}", issue.field, issue.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        })?;
-        Ok(settings)
-    }
-
-    pub fn save(&self, settings: &Settings) -> YiyuResult<()> {
-        settings.validate().map_err(|issues| {
-            YiyuError::new(
-                crate::ErrorKind::Validation,
-                issues
-                    .iter()
-                    .map(|issue| format!("{}: {}", issue.field, issue.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        })?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec_pretty(settings)?;
-        let mut file = AtomicWriteFile::options().open(&self.path)?;
-        file.write_all(&bytes)?;
-        file.commit()?;
-        Ok(())
-    }
-
-    fn backup_invalid(&self) -> YiyuResult<PathBuf> {
-        let bytes = fs::read(&self.path)?;
-        let backup = self
-            .path
-            .with_file_name(format!("settings.invalid-{}.json", uuid::Uuid::new_v4()));
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&backup)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        Ok(backup)
-    }
-}
-
-pub struct SettingsService {
-    store: SettingsStore,
-    recovery_backup: Option<PathBuf>,
-    current: RwLock<SettingsSnapshot>,
-    revision: AtomicU64,
-    commit: Mutex<()>,
-}
-
-impl SettingsService {
-    pub fn new(paths: &AppPaths) -> YiyuResult<Arc<Self>> {
-        let store = SettingsStore::new(paths);
-        let (settings, recovery_backup) = match store.load() {
-            Ok(settings) => (settings, None),
-            Err(_) => (Settings::default(), Some(store.backup_invalid()?)),
-        };
-        Ok(Arc::new(Self {
-            store,
-            recovery_backup,
-            current: RwLock::new(SettingsSnapshot {
-                revision: 0,
-                settings,
-            }),
-            revision: AtomicU64::new(0),
-            commit: Mutex::new(()),
-        }))
-    }
-
-    pub fn recovery_backup(&self) -> Option<&Path> {
-        self.recovery_backup.as_deref()
-    }
-
-    pub async fn snapshot(&self) -> SettingsSnapshot {
-        self.current.read().await.clone()
-    }
-
-    pub async fn patch(
-        &self,
-        expected_revision: u64,
-        patch: SettingsPatch,
-    ) -> YiyuResult<SettingsSnapshot> {
-        let _guard = self.commit.lock().await;
-        let current_revision = self.revision.load(Ordering::SeqCst);
-        if expected_revision != current_revision {
-            return Err(YiyuError::new(
-                crate::ErrorKind::Validation,
-                format!(
-                    "settings revision mismatch: current {current_revision}, received {expected_revision}"
-                ),
-            )
-            .field("revision"));
-        }
-        let current = self.current.read().await.clone();
-        let next = current.settings.apply_patch(&patch);
-        next.validate().map_err(|issues| {
-            YiyuError::new(
-                crate::ErrorKind::Validation,
-                issues
-                    .iter()
-                    .map(|issue| format!("{}: {}", issue.field, issue.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        })?;
-        self.store.save(&next)?;
-        let revision = current_revision + 1;
-        self.revision.store(revision, Ordering::SeqCst);
-        let snapshot = SettingsSnapshot {
-            revision,
-            settings: next,
-        };
-        *self.current.write().await = snapshot.clone();
-        Ok(snapshot)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::AppPaths;
+    use std::fs;
 
     fn valid_settings() -> Settings {
         Settings {
@@ -590,6 +439,170 @@ mod tests {
     #[test]
     fn defaults_are_valid_once_a_provider_is_selected() {
         assert!(valid_settings().validate().is_ok());
+    }
+
+    #[test]
+    fn credential_cleanup_queue_is_backward_compatible_and_backend_only() {
+        let mut old = serde_json::to_value(valid_settings()).unwrap();
+        old.as_object_mut()
+            .unwrap()
+            .remove("pendingCredentialCleanup");
+        let restored: Settings = serde_json::from_value(old).unwrap();
+        assert!(restored.pending_credential_cleanup.is_empty());
+
+        let forged: SettingsPatch = serde_json::from_value(serde_json::json!({
+            "pendingCredentialCleanup": ["provider-a"]
+        }))
+        .unwrap();
+        assert!(forged.pending_credential_cleanup.is_none());
+        assert!(
+            restored
+                .apply_patch(&forged)
+                .pending_credential_cleanup
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn future_fields_survive_edits_without_becoming_renderer_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(temp.path());
+        let mut document = serde_json::to_value(valid_settings()).unwrap();
+        document["futureSettings"] = serde_json::json!({"example": [1, 2]});
+        document["shortcuts"]["futureShortcut"] = serde_json::json!("Control+F");
+        document["providers"][0]["futureProviderField"] = serde_json::json!({"mode": "future"});
+        document["providers"][0]["extraHeaders"]["Temporary"] = serde_json::json!("remove me");
+        fs::write(
+            paths.settings_file(),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+
+        let service = SettingsService::new(&paths).unwrap();
+        let snapshot = service.snapshot().await;
+        assert!(
+            serde_json::to_value(&snapshot.settings)
+                .unwrap()
+                .get("futureSettings")
+                .is_none()
+        );
+        let mut providers = snapshot.settings.providers.clone();
+        providers[0].extra_headers.remove("Temporary");
+        providers.reverse();
+        let updated = service
+            .patch(
+                snapshot.revision,
+                SettingsPatch {
+                    providers: Some(providers),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let updated = service
+            .patch(
+                updated.revision,
+                SettingsPatch {
+                    target_language: Some("ja".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let mut providers = updated.settings.providers.clone();
+        let mut new_provider = providers.iter().find(|p| p.id == "openai").unwrap().clone();
+        new_provider.id = "custom-new".into();
+        providers.insert(0, new_provider);
+        let updated = service
+            .patch(
+                updated.revision,
+                SettingsPatch {
+                    providers: Some(providers),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(paths.settings_file()).unwrap()).unwrap();
+        assert_eq!(saved["futureSettings"], document["futureSettings"]);
+        assert_eq!(
+            saved["shortcuts"]["futureShortcut"],
+            document["shortcuts"]["futureShortcut"]
+        );
+        let openai = saved["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "openai")
+            .unwrap();
+        assert_eq!(
+            openai["futureProviderField"],
+            document["providers"][0]["futureProviderField"]
+        );
+        assert!(openai["extraHeaders"].get("Temporary").is_none());
+        let new_provider = saved["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "custom-new")
+            .unwrap();
+        assert!(new_provider.get("futureProviderField").is_none());
+
+        let remaining = updated
+            .settings
+            .providers
+            .into_iter()
+            .filter(|p| p.id != "openai")
+            .collect();
+        service
+            .patch(
+                updated.revision,
+                SettingsPatch {
+                    providers: Some(remaining),
+                    active_provider_id: Some(Some("deepseek".into())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let after_delete: serde_json::Value =
+            serde_json::from_slice(&fs::read(paths.settings_file()).unwrap()).unwrap();
+        assert!(
+            after_delete["providers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|p| p["id"] != "openai")
+        );
+        assert_eq!(
+            SettingsService::new(&paths)
+                .unwrap()
+                .snapshot()
+                .await
+                .settings
+                .target_language,
+            "ja"
+        );
+    }
+
+    #[test]
+    fn newer_settings_version_is_never_replaced_by_defaults() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(temp.path());
+        let mut document = serde_json::to_value(valid_settings()).unwrap();
+        document["version"] = serde_json::json!(SETTINGS_VERSION + 1);
+        let original = serde_json::to_vec(&document).unwrap();
+        fs::write(paths.settings_file(), &original).unwrap();
+
+        let error = SettingsService::new(&paths)
+            .err()
+            .expect("future version must not be reset");
+        assert_eq!(error.kind, crate::ErrorKind::Unsupported);
+        assert_eq!(fs::read(paths.settings_file()).unwrap(), original);
+        assert_eq!(fs::read_dir(paths.root()).unwrap().count(), 1);
     }
 
     #[test]

@@ -56,6 +56,7 @@ export interface Settings {
   silentStart: boolean;
   backgroundId: string | null;
   backgroundChoice: BackgroundChoice | null;
+  pendingCredentialCleanup: string[];
 }
 
 export interface SettingsSnapshot {
@@ -254,6 +255,7 @@ export const CONTRACT_COMMANDS = {
   clearBackground: "clear_background",
   saveProviderSecret: "save_provider_secret",
   deleteProviderSecret: "delete_provider_secret",
+  retryCredentialCleanup: "retry_credential_cleanup",
   testProvider: "test_provider_connection",
   fetchModels: "fetch_provider_models",
   translateStart: "translate_start",

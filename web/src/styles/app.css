@@ -837,21 +837,8 @@ button {
 }
 .main-shell .history-item p:first-of-type { font-size: clamp(12px, 1.24vw, 17px); }
 .main-shell .history-item p:last-of-type { font-size: clamp(11px, 1.05vw, 15px); }
-.main-shell .history-item > div:first-child > span { font-size: clamp(10px, 0.9vw, 13px); }
 .main-shell .history-item { padding: clamp(10px, 1vw, 15px); }
-.main-shell .history-item .history-provider { width: clamp(26px, 2.3vw, 34px); height: clamp(26px, 2.3vw, 34px); }
 .main-shell .sidebar input { font-size: clamp(11.5px, 1vw, 14px); }
-
-.history-provider {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  place-items: center;
-  border-radius: 8px;
-  color: var(--accent-text);
-  background: var(--accent-weak);
-}
 
 .history-item {
   border-radius: 10px;
@@ -982,22 +969,22 @@ button {
 :root[data-theme="light"] { --selected-surface: rgba(42, 58, 61, 0.105); }
 :root[data-theme="dark"] { --selected-surface: rgba(255, 255, 255, 0.13); }
 .main-shell, .settings-shell, .onboarding-shell { isolation: isolate; background: var(--bg-app); }
-.main-shell > .titlebar, .settings-shell > .titlebar {
+.main-shell > .titlebar, .settings-shell > .titlebar, .onboarding-shell > .titlebar {
   background: transparent;
   border: 0;
 }
-.main-shell > .titlebar .brand-lockup, .settings-shell > .titlebar .brand-lockup {
+.main-shell > .titlebar .brand-lockup, .settings-shell > .titlebar .brand-lockup, .onboarding-shell > .titlebar .brand-lockup {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
   pointer-events: none;
 }
-.main-shell > .titlebar .brand-mark, .settings-shell > .titlebar .brand-mark {
+.main-shell > .titlebar .brand-mark, .settings-shell > .titlebar .brand-mark, .onboarding-shell > .titlebar .brand-mark {
   width: 22px;
   height: 22px;
   border-radius: 6px;
 }
-.main-shell > .titlebar .brand-name, .settings-shell > .titlebar .brand-name { font-size: 13px; }
+.main-shell > .titlebar .brand-name, .settings-shell > .titlebar .brand-name, .onboarding-shell > .titlebar .brand-name { font-size: 13px; }
 .wallpaper { pointer-events: none; }
 .wallpaper::after { background: rgba(239, 244, 243, 0.24); }
 [data-theme="dark"] .wallpaper::after { background: rgba(8, 15, 17, 0.48); }
@@ -1009,12 +996,10 @@ button {
 .main-shell .history-item { padding: 10px 11px; }
 .main-shell .history-item p:first-of-type { font-size: 13px; }
 .main-shell .history-item p:last-of-type { font-size: 12px; }
-.main-shell .history-item > div:first-child > span { font-size: 11px; }
-.main-shell .history-item .history-provider { width: 27px; height: 27px; }
+.main-shell .history-item .history-meta { font-size: 11px; }
 .main-shell .sidebar input { font-size: 12px; }
 .history-item:hover { border-color: transparent; background: var(--bg-hover); }
 .history-item[data-active="true"] { border-color: transparent; background: var(--selected-surface); }
-.history-provider { color: var(--text-secondary); background: var(--selected-surface); }
 .workspace-toolbar { min-height: 56px; }
 .main-shell .workspace-toolbar .control { min-height: 34px !important; font-size: 13px; }
 .pane-heading { min-height: 50px; }

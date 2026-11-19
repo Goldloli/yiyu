@@ -110,7 +110,7 @@ export function OnboardingWindow() {
         <main className="onboarding-content flex min-w-0 flex-1 flex-col overflow-y-auto">
           {step === 0 && (
             <div className="fade-in flex min-h-full flex-col">
-              <h2 className="mt-2 text-[22px] font-semibold">
+              <h2 className="mt-2 text-[20px] font-semibold">
                 {ui === "en" ? "Choose your model provider" : "选择你的模型服务"}
               </h2>
               <div className="onboarding-provider-grid mt-6 grid grid-cols-2 gap-2">
@@ -130,7 +130,7 @@ export function OnboardingWindow() {
                     onClick={() => chooseProvider(provider.id)}
                   >
                     <span
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] text-[9px] font-bold"
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] text-[10px] font-bold"
                       style={{
                         color: "var(--text-secondary)",
                         background: "var(--bg-hover)"
@@ -139,8 +139,8 @@ export function OnboardingWindow() {
                       {providerInitials(provider.label)}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[11.5px] font-semibold">{provider.label}</span>
-                      <span className="mt-0.5 block truncate text-[9.5px] text-tertiary">
+                      <span className="block text-[13px] font-semibold">{provider.label}</span>
+                      <span className="mt-0.5 block truncate text-[12px] text-tertiary">
                         {provider.model}
                       </span>
                     </span>
@@ -164,11 +164,11 @@ export function OnboardingWindow() {
 
           {step === 1 && (
             <div className="fade-in flex h-full flex-col">
-              <h2 className="mt-2 text-[22px] font-semibold">{draft.label}</h2>
+              <h2 className="mt-2 text-[20px] font-semibold">{draft.label}</h2>
               <div className="mt-6 space-y-4">
                 <Field label={t("settings.baseUrl", undefined, ui)}>
                   <input
-                    className="control mono w-full px-3 text-[11.5px]"
+                    className="control mono w-full px-3 text-[13px]"
                     value={draft.baseUrl}
                     onChange={(event) =>
                       setDraft({ ...draft, baseUrl: event.target.value })
@@ -183,7 +183,7 @@ export function OnboardingWindow() {
                   >
                     <input
                       type="password"
-                      className="control mono w-full px-3 text-[11.5px]"
+                      className="control mono w-full px-3 text-[13px]"
                       value={apiKey}
                       placeholder={t("settings.apiKeyPlaceholder", undefined, ui)}
                       onChange={(event) => setApiKey(event.target.value)}
@@ -203,7 +203,7 @@ export function OnboardingWindow() {
                       />
                     ) : (
                       <input
-                        className="control mono min-w-0 flex-1 px-3 text-[11.5px]"
+                        className="control mono min-w-0 flex-1 px-3 text-[13px]"
                         value={draft.model}
                         onChange={(event) => setDraft({ ...draft, model: event.target.value })}
                         spellCheck={false}
@@ -264,7 +264,7 @@ export function OnboardingWindow() {
                 </Button>
                 {testResult && (
                   <span
-                    className="text-[10.5px]"
+                    className="text-[12px]"
                     style={{ color: testResult.ok ? "var(--success)" : "var(--danger)" }}
                   >
                     {testResult.ok
@@ -294,12 +294,12 @@ export function OnboardingWindow() {
 
           {step === 2 && (
             <div className="fade-in flex h-full flex-col">
-              <h2 className="mt-2 text-[22px] font-semibold">
+              <h2 className="mt-2 text-[20px] font-semibold">
                 {ui === "en"
                   ? "Yiyu needs to see your selection"
                   : "允许译羽读取你的选区"}
               </h2>
-              <p className="mt-2 max-w-[520px] text-[11.5px] leading-5 text-secondary">
+              <p className="mt-2 max-w-[520px] text-[13px] leading-5 text-secondary">
                 {ui === "en"
                   ? "macOS requires Accessibility permission for global selection capture. Yiyu reads the current selection only when you invoke its shortcut."
                   : "macOS 的全局划词需要辅助功能权限。译羽只会在你触发快捷键时读取当前选区。"}
@@ -324,7 +324,7 @@ export function OnboardingWindow() {
                 </span>
                 <div className="flex-1">
                   <p className="text-[12px] font-semibold">{t("settings.accessibility", undefined, ui)}</p>
-                  <p className="mt-0.5 text-[10.5px] text-tertiary">
+                  <p className="mt-0.5 text-[12px] text-tertiary">
                     {permissions.accessibility
                       ? t("settings.accessibilityGranted", undefined, ui)
                       : t("settings.accessibilityMissing", undefined, ui)}
@@ -346,7 +346,7 @@ export function OnboardingWindow() {
                 )}
               </div>
               {permissionRequested && !permissions.accessibility && (
-                <p className="mt-3 text-[11.5px] leading-5 text-secondary">
+                <p className="mt-3 text-[13px] leading-5 text-secondary">
                   {ui === "en"
                     ? "If already enabled in System Settings, remove the old Yiyu entry, add this version, and restart Yiyu if needed."
                     : "若系统中已开启，请移除旧的译羽条目并添加当前版本；必要时重启译羽。"}

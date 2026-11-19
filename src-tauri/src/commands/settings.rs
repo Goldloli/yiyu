@@ -1,3 +1,6 @@
+use crate::credential_cleanup::{
+    pending_after_provider_change, persist_and_cleanup, retry_pending_cleanup,
+};
 use crate::dto::{ProviderViewDTO, SettingsEnvelopeDTO};
 use crate::events;
 use crate::state::AppState;
@@ -51,7 +54,7 @@ pub async fn patch_settings(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     expected_revision: u64,
-    patch: SettingsPatch,
+    mut patch: SettingsPatch,
 ) -> YiyuResult<SettingsEnvelopeDTO> {
     let _settings_guard = state.settings_update.lock().await;
     let previous = state.settings.snapshot().await;
@@ -64,6 +67,17 @@ pub async fn patch_settings(
             ),
         )
         .field("revision"));
+    }
+    let next = previous.settings.apply_patch(&patch);
+    let removed = previous.settings.providers.iter().any(|provider| {
+        !next
+            .providers
+            .iter()
+            .any(|current| current.id == provider.id)
+    });
+    let pending = pending_after_provider_change(&previous.settings, &next);
+    if pending != previous.settings.pending_credential_cleanup {
+        patch.pending_credential_cleanup = Some(pending);
     }
     let next = previous.settings.apply_patch(&patch);
     next.validate().map_err(|issues| {
@@ -85,29 +99,24 @@ pub async fn patch_settings(
         );
         return Err(error);
     }
-    let snapshot = match state.settings.patch(expected_revision, patch).await {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            if shortcuts_changed {
-                state.set_shortcut_registration_failed(
-                    crate::shortcuts::reload(&app, &previous.settings).is_err(),
-                );
+    let snapshot =
+        match persist_and_cleanup(&state.settings, expected_revision, patch, removed, |id| {
+            state.credentials.delete(id)
+        })
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                if shortcuts_changed {
+                    state.set_shortcut_registration_failed(
+                        crate::shortcuts::reload(&app, &previous.settings).is_err(),
+                    );
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
     if shortcuts_changed {
         state.set_shortcut_registration_failed(false);
-    }
-    for provider in &previous.settings.providers {
-        if !snapshot
-            .settings
-            .providers
-            .iter()
-            .any(|current| current.id == provider.id)
-        {
-            let _ = state.credentials.delete(&provider.id);
-        }
     }
     let envelope = settings_envelope(snapshot.clone(), &state.credentials);
     events::emit(&app, events::SETTINGS_CHANGED, envelope.clone());
@@ -165,12 +174,24 @@ pub async fn save_provider_secret(
     provider_id: String,
     secret: String,
 ) -> YiyuResult<()> {
+    let _settings_guard = state.settings_update.lock().await;
+    let settings = state.settings.snapshot().await;
+    if !settings
+        .settings
+        .providers
+        .iter()
+        .any(|provider| provider.id == provider_id)
+    {
+        return Err(YiyuError::validation(
+            "provider no longer exists",
+            "providerId",
+        ));
+    }
     if secret.trim().is_empty() {
         state.credentials.delete(&provider_id)?;
     } else {
         state.credentials.set(&provider_id, secret.trim())?;
     }
-    let settings = state.settings.snapshot().await;
     events::emit(
         &app,
         events::SETTINGS_CHANGED,
@@ -185,6 +206,7 @@ pub async fn delete_provider_secret(
     state: State<'_, Arc<AppState>>,
     provider_id: String,
 ) -> YiyuResult<()> {
+    let _settings_guard = state.settings_update.lock().await;
     state.credentials.delete(&provider_id)?;
     let settings = state.settings.snapshot().await;
     events::emit(
@@ -193,6 +215,20 @@ pub async fn delete_provider_secret(
         settings_envelope(settings, &state.credentials),
     );
     Ok(())
+}
+
+#[tauri::command]
+pub async fn retry_credential_cleanup<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, Arc<AppState>>,
+) -> YiyuResult<SettingsEnvelopeDTO> {
+    let _settings_guard = state.settings_update.lock().await;
+    let snapshot = state.settings.snapshot().await;
+    let snapshot =
+        retry_pending_cleanup(&state.settings, snapshot, |id| state.credentials.delete(id)).await?;
+    let envelope = settings_envelope(snapshot, &state.credentials);
+    events::emit(&app, events::SETTINGS_CHANGED, envelope.clone());
+    Ok(envelope)
 }
 
 #[tauri::command]

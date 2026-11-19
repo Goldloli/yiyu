@@ -1,11 +1,13 @@
 mod background;
 mod capture;
 mod commands;
+mod credential_cleanup;
 mod credentials;
 mod dto;
 mod events;
 mod logging;
 mod shortcuts;
+mod startup_error;
 mod state;
 mod translation_flow;
 mod translation_session;
@@ -52,7 +54,17 @@ pub fn run() {
         .ensure()
         .expect("cannot initialize Yiyu data directory");
     logging::init(&paths.logs_dir()).expect("cannot initialize Yiyu logging");
-    let state = AppState::new(paths).expect("cannot initialize Yiyu application state");
+    let state = match AppState::new(paths) {
+        Ok(state) => state,
+        Err(error)
+            if error.kind == yiyu_core::ErrorKind::Unsupported
+                && error.field.as_deref() == Some("version") =>
+        {
+            startup_error::show_upgrade_required();
+            return;
+        }
+        Err(error) => panic!("cannot initialize Yiyu application state: {error}"),
+    };
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -139,6 +151,7 @@ pub fn run() {
             commands::settings::clear_background,
             commands::settings::save_provider_secret,
             commands::settings::delete_provider_secret,
+            commands::settings::retry_credential_cleanup,
             commands::settings::test_provider_connection,
             commands::settings::fetch_provider_models,
             commands::translation::translate_start,

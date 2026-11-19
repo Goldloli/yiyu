@@ -83,6 +83,8 @@ try {
     document.body.innerText.includes("阅读应该像思考一样自然")
   );
   assert.match(await page.locator("body").innerText(), /最近翻译|RECENT TRANSLATIONS/);
+  await page.getByRole("textbox", { name: "搜索" }).fill("no-such-translation-834");
+  await page.getByText("没有匹配的翻译记录").waitFor();
   await page.getByRole("textbox", { name: "搜索" }).fill("Lightness");
   await page.waitForFunction(
     () => document.querySelectorAll(".history-item").length === 1
@@ -234,6 +236,15 @@ try {
   await page.getByRole("button", { name: /LM Studio/ }).click();
   await page.getByRole("heading", { name: "LM Studio" }).waitFor();
   await page.setViewportSize({ width: 1200, height: 800 });
+
+  await page.goto(`${base}/#/settings?scenario=credential-cleanup-failure`);
+  await page.waitForSelector("[data-window='settings']");
+  await page.getByRole("button", { name: "添加自定义服务" }).click();
+  await page.getByRole("button", { name: "删除自定义服务" }).click();
+  await page.getByRole("dialog", { name: "删除此服务及其 API Key？" }).getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByText("已删除服务的 API Key 可能仍保存在系统凭据库中。").waitFor();
+  await page.getByRole("button", { name: "重试清理" }).click();
+  await page.getByText("已删除服务的 API Key 可能仍保存在系统凭据库中。").waitFor({ state: "hidden" });
 
   await page.goto(`${base}/#/settings?scenario=permission-refresh`);
   await page.getByRole("button", { name: "通用", exact: true }).click();

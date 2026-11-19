@@ -33,7 +33,11 @@ The application SHALL store API keys in macOS Keychain or Windows Credential Man
 
 #### Scenario: 删除 Provider
 - **WHEN** 用户删除自定义 Provider
-- **THEN** 应用同时删除对应系统凭据与非敏感配置，不留下可复用密钥
+- **THEN** 应用先原子保存非敏感配置和待清理标识，再删除对应系统凭据；成功后清除标识
+
+#### Scenario: 系统凭据清理失败
+- **WHEN** Provider 配置已删除但系统凭据库暂时无法删除对应密钥
+- **THEN** 应用保留不含密钥的待清理标识，告知用户并提供重试；重新添加同一 Provider 后不得删除新密钥
 
 ### Requirement: 连接测试
 The provider settings SHALL let users test the current base URL, API key, model and proxy without saving an invalid configuration as active, and MUST show latency or a readable failure reason.

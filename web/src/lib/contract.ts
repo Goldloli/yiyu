@@ -23,6 +23,7 @@ export interface Backend {
   clearBackground(expectedRevision: number): Promise<SettingsEnvelope>;
   saveProviderSecret(providerId: string, secret: string): Promise<void>;
   deleteProviderSecret(providerId: string): Promise<void>;
+  retryCredentialCleanup(): Promise<SettingsEnvelope>;
   testProvider(provider: ProviderConfig, apiKey?: string | null): Promise<ProviderTestResult>;
   fetchModels(provider: ProviderConfig, apiKey?: string | null): Promise<string[]>;
   startTranslation(input: StartTranslationInput): Promise<TranslationStartResult>;

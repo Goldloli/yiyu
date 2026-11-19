@@ -23,6 +23,7 @@ fn moved_commands_keep_their_original_ipc_names_and_responses() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             settings::get_settings,
+            settings::retry_credential_cleanup,
             history::list_history,
             system::get_diagnostics,
             updates::get_update_snapshot
@@ -55,6 +56,10 @@ fn moved_commands_keep_their_original_ipc_names_and_responses() {
         1
     );
     assert!(settings["revision"].is_number());
+    assert_eq!(
+        invoke("retry_credential_cleanup", serde_json::json!({}))["settings"]["pendingCredentialCleanup"],
+        serde_json::json!([])
+    );
     assert_eq!(
         invoke("list_history", serde_json::json!({ "filter": {} })),
         serde_json::json!([])

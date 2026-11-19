@@ -173,6 +173,7 @@ function ModelsSection({
   const patchSettings = useYiyuStore((state) => state.patchSettings);
   const saveSecret = useYiyuStore((state) => state.saveProviderSecret);
   const deleteSecret = useYiyuStore((state) => state.deleteProviderSecret);
+  const retryCredentialCleanup = useYiyuStore((state) => state.retryCredentialCleanup);
   const testProvider = useYiyuStore((state) => state.testProvider);
   const fetchModels = useYiyuStore((state) => state.fetchModels);
   const provider = providers.find((item) => item.id === selected) ?? providers[0];
@@ -185,6 +186,7 @@ function ModelsSection({
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [cleaningCredentials, setCleaningCredentials] = useState(false);
 
   useEffect(() => {
     if (!provider) return;
@@ -283,6 +285,15 @@ function ModelsSection({
             </div>
           }
         />
+        {settings && settings.pendingCredentialCleanup.length > 0 && (
+          <div role="status" className="mb-5 flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-[13px]" style={{ borderColor: "var(--line)", background: "var(--bg-hover)" }}>
+            <span>{ui === "en" ? "Some removed services may still have API keys in the system credential store." : "已删除服务的 API Key 可能仍保存在系统凭据库中。"}</span>
+            <Button disabled={cleaningCredentials} onClick={() => {
+              setCleaningCredentials(true);
+              void retryCredentialCleanup().finally(() => setCleaningCredentials(false));
+            }}>{ui === "en" ? "Retry" : "重试清理"}</Button>
+          </div>
+        )}
         <div className="space-y-4 pb-8">
           <Field label={ui === "en" ? "Display name" : "显示名称"}>
             <input

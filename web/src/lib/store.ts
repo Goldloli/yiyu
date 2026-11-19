@@ -47,6 +47,7 @@ interface YiyuState {
   patchSettings: (patch: SettingsPatch) => Promise<SettingsEnvelope>;
   saveProviderSecret: (providerId: string, secret: string) => Promise<void>;
   deleteProviderSecret: (providerId: string) => Promise<void>;
+  retryCredentialCleanup: () => Promise<void>;
   testProvider: (
     provider: ProviderConfig,
     apiKey?: string | null
@@ -280,6 +281,20 @@ export const useYiyuStore = create<YiyuState>((set, get) => ({
 
   deleteProviderSecret: async (providerId) => {
     await getBackend().deleteProviderSecret(providerId);
+  },
+
+  retryCredentialCleanup: async () => {
+    try {
+      const envelope = await getBackend().retryCredentialCleanup();
+      get().applySettings(envelope);
+      if (envelope.settings.pendingCredentialCleanup.length > 0) {
+        const en = resolveUiLanguage(envelope.settings.uiLanguage) === "en";
+        get().notify("error", en ? "Could not remove the saved API keys" : "无法清理系统中的 API Key", "credential-cleanup");
+      }
+    } catch (error) {
+      const normalized = normalizeError(error);
+      get().notify("error", normalized.message, normalized.kind);
+    }
   },
 
   testProvider: async (provider, apiKey) => {

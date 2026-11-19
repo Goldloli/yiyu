@@ -21,6 +21,7 @@ export function createTauriBackend(): Backend {
       invoke(CONTRACT_COMMANDS.saveProviderSecret, { providerId, secret }),
     deleteProviderSecret: (providerId) =>
       invoke(CONTRACT_COMMANDS.deleteProviderSecret, { providerId }),
+    retryCredentialCleanup: () => invoke(CONTRACT_COMMANDS.retryCredentialCleanup),
     testProvider: (provider, apiKey) =>
       invoke(CONTRACT_COMMANDS.testProvider, { provider, apiKey }),
     fetchModels: (provider, apiKey) =>

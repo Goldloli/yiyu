@@ -259,6 +259,7 @@ function baseSettings(): Settings {
     silentStart: appearance.silentStart ?? false,
     backgroundId: null,
     backgroundChoice: appearance.backgroundChoice ?? null,
+    pendingCredentialCleanup: [],
     ...(configured ? {} : {})
   };
 }
@@ -405,7 +406,20 @@ export class MockBackend implements Backend {
     if (expectedRevision < this.settingsRevision) {
       throw mockError("validation", "Settings revision is stale");
     }
+    const removed = patch.providers
+      ? this.settings.providers.filter((provider) => !patch.providers!.some((next) => next.id === provider.id))
+      : [];
     this.settings = mergeSettingsPatch(this.settings, patch);
+    this.settings.pendingCredentialCleanup = this.settings.pendingCredentialCleanup.filter(
+      (id) => !this.settings.providers.some((provider) => provider.id === id)
+    );
+    for (const provider of removed) {
+      if (currentScenario() === "credential-cleanup-failure") {
+        this.settings.pendingCredentialCleanup.push(provider.id);
+      } else {
+        this.configuredProviderIds.delete(provider.id);
+      }
+    }
     if (patch.theme !== undefined || patch.windowGlass !== undefined || patch.backgroundChoice !== undefined || patch.silentStart !== undefined) {
       try {
         if (typeof localStorage !== "undefined") localStorage.setItem("yiyu-mock-appearance", JSON.stringify({ theme: this.settings.theme, windowGlass: this.settings.windowGlass, backgroundChoice: this.settings.backgroundChoice, silentStart: this.settings.silentStart }));
@@ -420,6 +434,15 @@ export class MockBackend implements Backend {
   async getBackground(): Promise<string | null> {
     await this.restoreBackground();
     return currentScenario() === "background-missing" ? null : this.background;
+  }
+
+  async retryCredentialCleanup(): Promise<SettingsEnvelope> {
+    for (const id of this.settings.pendingCredentialCleanup) this.configuredProviderIds.delete(id);
+    this.settings.pendingCredentialCleanup = [];
+    this.settingsRevision += 1;
+    const envelope = await this.getSettings();
+    this.emit(CONTRACT_EVENTS.settings, envelope);
+    return envelope;
   }
 
   async getAutostart(): Promise<boolean> {

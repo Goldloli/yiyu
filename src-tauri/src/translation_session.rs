@@ -34,6 +34,9 @@ impl TranslationCoordinator {
         if let Some(previous) = state.pending.insert(surface.to_owned(), intent.clone()) {
             previous.cancel.cancel();
         }
+        if let Some(previous) = state.active.remove(surface) {
+            previous.cancel.cancel();
+        }
         intent
     }
 
@@ -207,7 +210,8 @@ mod tests {
             .unwrap();
 
         let second = state.begin_request("popup");
-        assert!(!active.is_cancelled());
+        assert!(active.is_cancelled());
+        assert!(!state.claim_translation_completion("popup", "first"));
         assert!(
             state
                 .begin_translation("popup", "second".into(), &second)
@@ -215,6 +219,25 @@ mod tests {
         );
         assert!(active.is_cancelled());
         assert!(!state.is_active("popup", "first"));
+    }
+
+    #[test]
+    fn a_new_popup_request_does_not_cancel_active_main_translation() {
+        let state = TranslationCoordinator::default();
+        let main_intent = state.begin_request("main");
+        let main = state
+            .begin_translation("main", "main-1".into(), &main_intent)
+            .unwrap();
+        let popup_intent = state.begin_request("popup");
+        let popup = state
+            .begin_translation("popup", "popup-1".into(), &popup_intent)
+            .unwrap();
+
+        let _next_popup = state.begin_request("popup");
+
+        assert!(popup.is_cancelled());
+        assert!(!main.is_cancelled());
+        assert!(state.claim_translation_completion("main", "main-1"));
     }
 
     #[test]

@@ -1,7 +1,6 @@
 import {
   ArrowLeftRight,
   Copy,
-  History,
   MessageSquareText,
   PanelLeft,
   Plus,
@@ -27,21 +26,6 @@ import {
   useYiyuStore
 } from "../lib/store";
 import type { HistoryEntry, Language } from "../lib/types";
-
-function ProviderBadge({ id }: { id: string }) {
-  const provider = useYiyuStore((state) =>
-    state.providers.find((item) => item.id === id)
-  );
-  if (!provider) return null;
-  return (
-    <span
-      className="history-provider"
-      aria-hidden="true"
-    >
-      <MessageSquareText size={14} />
-    </span>
-  );
-}
 
 function HistorySidebar({
   selectedId,
@@ -71,19 +55,26 @@ function HistorySidebar({
     <aside className="sidebar glass-surface flex min-h-0 flex-col" data-open={open ? "true" : "false"}>
       <div className="px-3 pb-2 pt-3">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div>
-            <p className="history-title">
-              {t("main.recent", undefined, ui)}
-            </p>
+          <p className="history-title">{t("main.recent", undefined, ui)}</p>
+          <div className="flex items-center gap-1">
+            {history.length > 0 && (
+              <IconButton
+                label={t("history.clear", undefined, ui)}
+                className="!h-7 !w-7"
+                onClick={() => setConfirmClear(true)}
+              >
+                <Trash2 size={13} />
+              </IconButton>
+            )}
+            <Button
+              variant="ghost"
+              className="!min-h-7 !px-2 text-[12px]"
+              icon={<Plus size={13} />}
+              onClick={onNew}
+            >
+              {ui === "en" ? "New" : "新建"}
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            className="!min-h-7 !px-2 text-[11px]"
-            icon={<Plus size={13} />}
-            onClick={onNew}
-          >
-            {ui === "en" ? "New" : "新建"}
-          </Button>
         </div>
         <div className="relative">
           <Search
@@ -98,26 +89,14 @@ function HistorySidebar({
             aria-label={t("common.search", undefined, ui)}
           />
         </div>
-        {history.length > 0 && (
-          <div className="mt-1 flex justify-end">
-            <IconButton
-              label={t("history.clear", undefined, ui)}
-              className="!h-7 !w-7"
-              onClick={() => setConfirmClear(true)}
-            >
-              <Trash2 size={12} />
-            </IconButton>
-          </div>
-        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {history.length === 0 ? (
-          <div className="grid place-items-center px-5 py-14 text-center">
-            <div className="mb-3 grid h-10 w-10 place-items-center rounded-[8px] bg-[var(--bg-hover)] text-tertiary">
-              <History size={18} />
-            </div>
-            <p className="text-[12px] font-medium">{t("main.emptyHistory", undefined, ui)}</p>
-          </div>
+          <p className="px-5 py-14 text-center text-[12px] text-tertiary">
+            {query.trim()
+              ? (ui === "en" ? "No matching translations" : "没有匹配的翻译记录")
+              : t("main.emptyHistory", undefined, ui)}
+          </p>
         ) : (
           <div className="space-y-1">
             {history.map((entry) => (
@@ -136,21 +115,16 @@ function HistorySidebar({
                   }
                 }}
               >
-                <div className="mb-1.5 flex items-center gap-2">
-                  <ProviderBadge id={entry.providerId} />
-                  <span className="min-w-0 flex-1 truncate text-[10.5px] text-tertiary">
-                    {entry.sourceLanguage} → {entry.targetLanguage}
-                  </span>
-                  <span className="shrink-0 text-[10px] text-tertiary">
-                    {formatRelativeTime(entry.createdAt, ui)}
-                  </span>
-                </div>
-                <p className="line-clamp-1 text-[11.5px] font-medium leading-5">
+                <p className="line-clamp-1 pr-6 text-[13px] font-medium leading-5">
                   {compactText(entry.sourceText, 62)}
                 </p>
-                <p className="mt-0.5 line-clamp-2 text-[10.5px] leading-[1.55] text-secondary">
+                <p className="mt-0.5 line-clamp-2 text-[12px] leading-[1.55] text-secondary">
                   {compactText(entry.translatedText, 80)}
                 </p>
+                <div className="history-meta mt-2 flex items-center gap-2 text-tertiary">
+                  <span className="min-w-0 flex-1 truncate">{entry.sourceLanguage} → {entry.targetLanguage}</span>
+                  <span className="shrink-0">{formatRelativeTime(entry.createdAt, ui)}</span>
+                </div>
                 <div className="history-actions pointer-events-none absolute right-1 top-1 flex gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                   <IconButton
                     label={t("history.delete", undefined, ui)}
